@@ -61,6 +61,9 @@ button{cursor:pointer;border:0;background:none;padding:0}
 .sum{display:flex;align-items:center;gap:12px;padding:0 16px 10px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow-x:auto;scrollbar-width:none}
 .sum::-webkit-scrollbar{display:none}
 .sum b{color:var(--ink);font-weight:700}
+.syncbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--accent) 10%,var(--surface));font-size:13px;font-weight:600}
+.syncbar[hidden]{display:none!important}
+.syncbar .btn{height:32px;font-size:13px}
 .sum-bar{flex:0 0 120px;height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--line)}
 .sum-bar i{display:block;height:100%}
 .sum-leg{display:inline-flex;align-items:center;gap:5px}
@@ -192,6 +195,7 @@ input[type=color]{width:38px;height:38px;padding:0;border:1px solid var(--line);
     </button>
   </div>
 </header>
+<div class="syncbar" id="syncBar" hidden></div>
 <div class="sum" id="sum"></div>
 <main id="scroller"></main>
 <button class="fab" id="fab" aria-label="New block">+</button>
@@ -244,7 +248,7 @@ function adopt(raw) {
   S = state.settings; C = state.categories; B = state.blocks;
 }
 function load() { let raw = null; try { raw = JSON.parse(localStorage.getItem(KEY)); } catch (e) {} adopt(raw); }
-let syncTimer = null, syncPushTimer = null, syncBusy = false, syncStatus = 'off';
+let syncTimer = null, syncPushTimer = null, pullBusy = false, pushBusy = false, syncStatus = 'off';
 function save(opts) {
   state.updatedAt = Date.now();
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
@@ -261,7 +265,7 @@ function newSyncId() {
   return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
 }
 function syncUrlFor(id) {
-  const u = new URL(location.href);
+  const u = new URL(location.origin + location.pathname);
   u.searchParams.set('s', id);
   return u.toString();
 }
@@ -277,6 +281,26 @@ function syncApi(id) {
   if (location.protocol === 'file:') return null;
   return `/api/sync?id=${encodeURIComponent(id)}`;
 }
+function updateSyncBanner() {
+  const el = $('#syncBar');
+  if (!el) return;
+  if (syncStatus === 'local') {
+    el.hidden = false;
+    el.innerHTML = `<span>Sync needs the live Vercel site, not a local file.</span>`;
+    return;
+  }
+  if (syncStatus === 'err') {
+    el.hidden = false;
+    el.innerHTML = `<span>Sync offline — edits stay on this device for now.</span><button class="btn" data-copysyncbar type="button">Retry link</button>`;
+    return;
+  }
+  if (syncStatus === 'on' || syncStatus === 'saving') {
+    el.hidden = false;
+    el.innerHTML = `<span>Sync on — open this same link on your other device.</span><button class="btn primary" data-copysyncbar type="button">Copy sync link</button>`;
+    return;
+  }
+  el.hidden = true;
+}
 function scheduleSyncPush() {
   if (!state.syncId || !syncApi(state.syncId)) return;
   clearTimeout(syncPushTimer);
@@ -284,8 +308,8 @@ function scheduleSyncPush() {
 }
 async function syncPush() {
   const id = state.syncId, url = syncApi(id);
-  if (!id || !url || syncBusy) return;
-  syncBusy = true; syncStatus = 'saving';
+  if (!id || !url || pushBusy) return false;
+  pushBusy = true; syncStatus = 'saving'; updateSyncBanner();
   try {
     const r = await fetch(url, {
       method: 'PUT',
@@ -293,24 +317,35 @@ async function syncPush() {
       body: JSON.stringify(state)
     });
     syncStatus = r.ok ? 'on' : 'err';
-  } catch (e) { syncStatus = 'err'; }
-  finally { syncBusy = false; }
+    return r.ok;
+  } catch (e) { syncStatus = 'err'; return false; }
+  finally { pushBusy = false; updateSyncBanner(); }
 }
 async function syncPull(opts) {
   const id = state.syncId, url = syncApi(id);
-  if (!id || !url || syncBusy) return false;
-  syncBusy = true;
+  if (!id || !url || pullBusy) return false;
+  pullBusy = true;
   try {
     const r = await fetch(url, { cache: 'no-store' });
     if (r.status === 404) {
       syncStatus = 'on';
       if (!opts || opts.seed !== false) await syncPush();
+      updateSyncBanner();
       return false;
     }
-    if (!r.ok) { syncStatus = 'err'; return false; }
+    if (!r.ok) { syncStatus = 'err'; updateSyncBanner(); return false; }
     const remote = await r.json();
-    if (!remote || typeof remote !== 'object') { syncStatus = 'err'; return false; }
+    if (!remote || typeof remote !== 'object') { syncStatus = 'err'; updateSyncBanner(); return false; }
     const remoteAt = Number(remote.updatedAt) || 0;
+    const remoteBlocks = Array.isArray(remote.blocks) ? remote.blocks.length : 0;
+    const localBlocks = Array.isArray(state.blocks) ? state.blocks.length : 0;
+    /* Never let an empty cloud wipe a device that already has blocks. */
+    if (remoteBlocks === 0 && localBlocks > 0) {
+      syncStatus = 'on';
+      await syncPush();
+      updateSyncBanner();
+      return false;
+    }
     if (remoteAt > (state.updatedAt || 0)) {
       const keepView = view, keepCursor = cursor;
       adopt({ ...remote, syncId: id });
@@ -319,12 +354,15 @@ async function syncPull(opts) {
       applyTheme();
       if (!drag && !overlay.classList.contains('open')) render();
       syncStatus = 'on';
+      updateSyncBanner();
       return true;
     }
+    if (remoteAt < (state.updatedAt || 0) || (localBlocks > remoteBlocks)) await syncPush();
     syncStatus = 'on';
+    updateSyncBanner();
     return false;
-  } catch (e) { syncStatus = 'err'; return false; }
-  finally { syncBusy = false; }
+  } catch (e) { syncStatus = 'err'; updateSyncBanner(); return false; }
+  finally { pullBusy = false; }
 }
 function startSyncLoop() {
   clearInterval(syncTimer);
@@ -337,9 +375,6 @@ function startSyncLoop() {
 async function ensureSync() {
   const fromUrl = (() => { try { return new URL(location.href).searchParams.get('s'); } catch (e) { return null; } })();
   if (fromUrl && /^[a-f0-9]{32}$/.test(fromUrl)) {
-    if (state.syncId && state.syncId !== fromUrl && (state.blocks || []).length) {
-      /* Opening someone else's sync link replaces this device's cloud pointer. */
-    }
     state.syncId = fromUrl;
     save({ sync: false });
   }
@@ -348,9 +383,12 @@ async function ensureSync() {
     save({ sync: false });
   }
   writeSyncParam(state.syncId);
-  if (!syncApi(state.syncId)) { syncStatus = 'local'; return; }
+  if (!syncApi(state.syncId)) { syncStatus = 'local'; updateSyncBanner(); return; }
   await syncPull({ seed: true });
+  /* Always force a push after boot so existing local blocks actually land in the cloud. */
+  await syncPush();
   startSyncLoop();
+  updateSyncBanner();
 }
 
 let view = S.view === 'auto' ? (innerWidth < 720 ? 'day' : 'week') : S.view;
@@ -845,6 +883,13 @@ $('#fab').onclick = () => {
     const n = new Date(), s = Math.min(1440 - S.defDur, Math.ceil((n.getHours() * 60 + n.getMinutes() + 1) / 30) * 30);
     newBlock(t, s, s + S.defDur);
   } else newBlock(V.days[0], 9 * 60, 9 * 60 + S.defDur);
+};
+document.onclick = e => {
+  if (!e.target.closest('[data-copysyncbar]')) return;
+  const link = syncUrlFor(state.syncId);
+  const done = () => toast('Copied — open that exact link on your phone');
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done).catch(() => prompt('Copy this sync link', link));
+  else prompt('Copy this sync link', link);
 };
 addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (overlay.classList.contains('open')) closeSheet(); return; }
