@@ -1,7 +1,5 @@
-const CACHE = 'blocks-v2';
+const CACHE = 'blocks-v3';
 const ASSETS = [
-  './',
-  './index.html',
   './manifest.webmanifest',
   './icon.svg',
   './icon-192.png',
@@ -25,6 +23,20 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.pathname.startsWith('/api/')) return;
+
+  /* HTML always network-first so sync fixes land immediately. */
+  const isDoc = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
+  if (isDoc) {
+    e.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put('./index.html', copy));
+        return res;
+      }).catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+
   e.respondWith(
     caches.match(req).then(hit => hit || fetch(req).then(res => {
       const copy = res.clone();
@@ -32,6 +44,6 @@ self.addEventListener('fetch', e => {
         caches.open(CACHE).then(c => c.put(req, copy));
       }
       return res;
-    }).catch(() => caches.match('./index.html')))
+    }))
   );
 });

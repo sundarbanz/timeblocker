@@ -266,105 +266,120 @@ if (!state.weekTemplate) {
 }
 
 /* ---------- cross-device sync ---------- */
-function newSyncId() {
-  const a = new Uint8Array(16);
-  crypto.getRandomValues(a);
-  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
-}
-function syncUrlFor(id) {
-  const u = new URL(location.origin + location.pathname);
-  u.searchParams.set('s', id);
-  return u.toString();
-}
-function writeSyncParam(id) {
-  try {
-    const u = new URL(location.href);
-    if (u.searchParams.get('s') === id) return;
-    u.searchParams.set('s', id);
-    history.replaceState(null, '', u.pathname + u.search + u.hash);
-  } catch (e) {}
-}
-function syncApi(id) {
+/* One shared room for this app — every device on the Vercel URL uses it. */
+const SHARED_SYNC = 'c089f82428817e31b04a1db0b62bbf92';
+function syncApi() {
   if (location.protocol === 'file:') return null;
-  return `/api/sync?id=${encodeURIComponent(id)}`;
+  return `/api/sync?id=${encodeURIComponent(SHARED_SYNC)}`;
 }
 function updateSyncBanner() {
   const el = $('#syncBar');
   if (!el) return;
+  const n = (state.blocks || []).length;
   if (syncStatus === 'local') {
     el.hidden = false;
-    el.innerHTML = `<span>Sync needs the live Vercel site, not a local file.</span>`;
+    el.innerHTML = `<span>Open https://timeblocker-phi.vercel.app on both devices to sync.</span>`;
     return;
   }
   if (syncStatus === 'err') {
     el.hidden = false;
-    el.innerHTML = `<span>Sync offline — edits stay on this device for now.</span><button class="btn" data-copysyncbar type="button">Retry link</button>`;
+    el.innerHTML = `<span>Sync offline — will retry. ${n} block${n === 1 ? '' : 's'} on this device.</span><button class="btn" data-syncnow type="button">Retry</button>`;
     return;
   }
-  if (syncStatus === 'on' || syncStatus === 'saving') {
+  if (syncStatus === 'saving') {
     el.hidden = false;
-    el.innerHTML = `<span>Sync on — open this same link on your other device.</span><button class="btn primary" data-copysyncbar type="button">Copy sync link</button>`;
+    el.innerHTML = `<span>Saving to your other devices…</span>`;
+    return;
+  }
+  if (syncStatus === 'on') {
+    el.hidden = false;
+    el.innerHTML = `<span>Synced · ${n} block${n === 1 ? '' : 's'} · same calendar on phone &amp; PC</span><button class="btn" data-syncnow type="button">Sync now</button>`;
     return;
   }
   el.hidden = true;
 }
 function scheduleSyncPush() {
-  if (!state.syncId || !syncApi(state.syncId)) return;
+  if (!syncApi()) return;
   clearTimeout(syncPushTimer);
-  syncPushTimer = setTimeout(() => { syncPush(); }, 350);
+  syncPushTimer = setTimeout(() => { syncPush(); }, 250);
 }
 async function syncPush() {
-  const id = state.syncId, url = syncApi(id);
-  if (!id || !url || pushBusy) return false;
+  const url = syncApi();
+  if (!url || pushBusy) return false;
+  state.syncId = SHARED_SYNC;
   pushBusy = true; syncStatus = 'saving'; updateSyncBanner();
   try {
     const r = await fetch(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state)
+      body: JSON.stringify(state),
+      cache: 'no-store'
     });
     syncStatus = r.ok ? 'on' : 'err';
     return r.ok;
   } catch (e) { syncStatus = 'err'; return false; }
   finally { pushBusy = false; updateSyncBanner(); }
 }
-async function syncPull(opts) {
-  const id = state.syncId, url = syncApi(id);
-  if (!id || !url || pullBusy) return false;
+function applyRemote(remote) {
+  const keepView = view, keepCursor = cursor;
+  adopt({ ...remote, syncId: SHARED_SYNC });
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  view = keepView; cursor = keepCursor;
+  applyTheme();
+  if (!drag && overlay && !overlay.classList.contains('open')) render();
+}
+async function syncPull() {
+  const url = syncApi();
+  if (!url || pullBusy) return false;
   pullBusy = true;
   try {
     const r = await fetch(url, { cache: 'no-store' });
     if (r.status === 404) {
       syncStatus = 'on';
-      if (!opts || opts.seed !== false) await syncPush();
-      updateSyncBanner();
+      await syncPush();
       return false;
     }
     if (!r.ok) { syncStatus = 'err'; updateSyncBanner(); return false; }
     const remote = await r.json();
     if (!remote || typeof remote !== 'object') { syncStatus = 'err'; updateSyncBanner(); return false; }
+
+    const remoteBlocks = Array.isArray(remote.blocks) ? remote.blocks : [];
+    const localBlocks = Array.isArray(state.blocks) ? state.blocks : [];
     const remoteAt = Number(remote.updatedAt) || 0;
-    const remoteBlocks = Array.isArray(remote.blocks) ? remote.blocks.length : 0;
-    const localBlocks = Array.isArray(state.blocks) ? state.blocks.length : 0;
-    /* Never let an empty cloud wipe a device that already has blocks. */
-    if (remoteBlocks === 0 && localBlocks > 0) {
+    const localAt = Number(state.updatedAt) || 0;
+    const remoteIds = new Set(remoteBlocks.map(b => b.id));
+    const localIds = new Set(localBlocks.map(b => b.id));
+    const localOnly = localBlocks.filter(b => !remoteIds.has(b.id));
+    const remoteOnly = remoteBlocks.filter(b => !localIds.has(b.id));
+
+    /* Never let empty cloud wipe this device. */
+    if (!remoteBlocks.length && localBlocks.length) {
       syncStatus = 'on';
       await syncPush();
-      updateSyncBanner();
       return false;
     }
-    if (remoteAt > (state.updatedAt || 0)) {
-      const keepView = view, keepCursor = cursor;
-      adopt({ ...remote, syncId: id });
-      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
-      view = keepView; cursor = keepCursor;
-      applyTheme();
-      if (!drag && !overlay.classList.contains('open')) render();
-      syncStatus = 'on';
-      updateSyncBanner();
+
+    if (remoteAt > localAt) {
+      applyRemote(remote);
+      if (localOnly.length) {
+        for (const b of localOnly) B.push(b);
+        save();
+      } else {
+        syncStatus = 'on';
+        updateSyncBanner();
+      }
       return true;
     }
-    if (remoteAt < (state.updatedAt || 0) || (localBlocks > remoteBlocks)) await syncPush();
+
+    /* Local same/newer: absorb any remote-only blocks, then push. */
+    if (remoteOnly.length) {
+      for (const b of remoteOnly) B.push(b);
+      const have = new Set(C.map(c => c.id));
+      for (const c of (remote.categories || [])) if (c && c.id && !have.has(c.id)) { C.push(c); have.add(c.id); }
+      save();
+    } else {
+      await syncPush();
+    }
     syncStatus = 'on';
     updateSyncBanner();
     return false;
@@ -373,26 +388,17 @@ async function syncPull(opts) {
 }
 function startSyncLoop() {
   clearInterval(syncTimer);
-  if (!state.syncId || !syncApi(state.syncId)) return;
+  if (!syncApi()) return;
   syncTimer = setInterval(() => {
-    if (document.hidden || drag || overlay.classList.contains('open')) return;
-    syncPull({ seed: false });
-  }, 4000);
+    if (document.hidden || drag || (overlay && overlay.classList.contains('open'))) return;
+    syncPull();
+  }, 3000);
 }
 async function ensureSync() {
-  const fromUrl = (() => { try { return new URL(location.href).searchParams.get('s'); } catch (e) { return null; } })();
-  if (fromUrl && /^[a-f0-9]{32}$/.test(fromUrl)) {
-    state.syncId = fromUrl;
-    save({ sync: false });
-  }
-  if (!state.syncId) {
-    state.syncId = newSyncId();
-    save({ sync: false });
-  }
-  writeSyncParam(state.syncId);
-  if (!syncApi(state.syncId)) { syncStatus = 'local'; updateSyncBanner(); return; }
-  await syncPull({ seed: true });
-  /* Always force a push after boot so existing local blocks actually land in the cloud. */
+  state.syncId = SHARED_SYNC;
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  if (!syncApi()) { syncStatus = 'local'; updateSyncBanner(); return; }
+  await syncPull();
   await syncPush();
   startSyncLoop();
   updateSyncBanner();
@@ -795,13 +801,12 @@ function openSettings() {
 
     <h3>Sync across devices</h3>
     <p class="hint" style="margin:0 0 10px">${syncStatus === 'local'
-      ? 'Open this app from your Vercel URL (not a local file) so phone and desktop can sync.'
+      ? 'Open https://timeblocker-phi.vercel.app on phone and PC (not a local file).'
       : syncStatus === 'err'
-        ? 'Sync hiccup — edits still save on this device and will retry.'
-        : 'Edits sync automatically. Open this same link on your phone and computer.'}</p>
+        ? 'Sync hiccup — edits still save here and will retry.'
+        : 'Phone and PC share one calendar automatically. No special link needed — just open the same site.'}</p>
     <div class="actions" style="margin-top:0;margin-bottom:12px">
-      <button class="btn primary" data-copysync>Copy sync link</button>
-      <button class="btn" data-newsync>New sync link</button>
+      <button class="btn primary" data-syncnow>Sync now</button>
     </div>
 
     <h3>Your data</h3>
@@ -830,7 +835,7 @@ function openSettings() {
     f.text().then(txt => {
       const raw = JSON.parse(txt);
       if (!raw || !Array.isArray(raw.blocks)) throw 0;
-      adopt(raw); save(); applyTheme(); closeSheet(); render(); toast('Backup imported');
+      adopt({ ...raw, syncId: SHARED_SYNC }); save(); applyTheme(); closeSheet(); render(); toast('Backup imported — syncing');
     }).catch(() => toast("That file isn't a Blocks backup"));
   };
   sheet.onclick = e => {
@@ -843,20 +848,8 @@ function openSettings() {
       const id = dc.closest('.catrow').dataset.id, i = C.findIndex(c => c.id === id);
       C.splice(i, 1); B.forEach(b => { if (b.cat === id) b.cat = C[0].id; }); save(); render(); return re();
     }
-    if (t.closest('[data-copysync]')) {
-      const link = syncUrlFor(state.syncId);
-      const done = () => toast('Sync link copied — open it on your other device');
-      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done).catch(() => prompt('Copy this sync link', link));
-      else prompt('Copy this sync link', link);
-      return;
-    }
-    if (t.closest('[data-newsync]')) {
-      if (!confirm('Create a new sync link? This device keeps its blocks, but old links stop updating here.')) return;
-      state.syncId = newSyncId();
-      writeSyncParam(state.syncId);
-      save();
-      startSyncLoop();
-      syncPush().then(() => { openSettings(); toast('New sync link ready — copy it to your other devices'); });
+    if (t.closest('[data-syncnow]')) {
+      syncPull().then(() => syncPush()).then(() => { toast(syncStatus === 'on' ? 'Synced' : 'Sync failed — try again'); re(); });
       return;
     }
     if (t.closest('[data-export]')) {
@@ -899,11 +892,8 @@ $('#fab').onclick = () => {
   } else newBlock(V.days[0], 9 * 60, 9 * 60 + S.defDur);
 };
 document.onclick = e => {
-  if (!e.target.closest('[data-copysyncbar]')) return;
-  const link = syncUrlFor(state.syncId);
-  const done = () => toast('Copied — open that exact link on your phone');
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done).catch(() => prompt('Copy this sync link', link));
-  else prompt('Copy this sync link', link);
+  if (!e.target.closest('[data-syncnow]')) return;
+  syncPull().then(() => syncPush()).then(() => toast(syncStatus === 'on' ? 'Synced' : 'Sync failed — try again'));
 };
 addEventListener('keydown', e => {
   if (e.key === 'Escape') { if (overlay.classList.contains('open')) closeSheet(); return; }
