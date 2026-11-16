@@ -61,9 +61,10 @@ button{cursor:pointer;border:0;background:none;padding:0}
 .sum{display:flex;align-items:center;gap:12px;padding:0 16px 10px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow-x:auto;scrollbar-width:none}
 .sum::-webkit-scrollbar{display:none}
 .sum b{color:var(--ink);font-weight:700}
-.syncbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--accent) 10%,var(--surface));font-size:13px;font-weight:600}
-.syncbar[hidden]{display:none!important}
-.syncbar .btn{height:32px;font-size:13px}
+.syncchip{height:36px;padding:0 10px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;max-width:42vw;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.syncchip.on{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+.syncchip.err{color:#c9372c;border-color:color-mix(in srgb,#c9372c 35%,var(--line))}
+.syncchip .dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex:0 0 auto;opacity:.85}
 .sum-bar{flex:0 0 120px;height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--line)}
 .sum-bar i{display:block;height:100%}
 .sum-leg{display:inline-flex;align-items:center;gap:5px}
@@ -185,6 +186,7 @@ input[type=color]{width:38px;height:38px;padding:0;border:1px solid var(--line);
     <button class="title" id="title" aria-label="Jump to date"><span id="titleText"></span><input type="date" id="jump" tabindex="-1" aria-hidden="true"></button>
     <span style="flex:1"></span>
     <button class="btn" id="today">Today</button>
+    <button class="syncchip" id="syncChip" type="button" title="Sync now" aria-label="Sync status">…</button>
   </div>
   <div class="top-r">
     <div class="seg" id="views" role="tablist">
@@ -195,7 +197,6 @@ input[type=color]{width:38px;height:38px;padding:0;border:1px solid var(--line);
     </button>
   </div>
 </header>
-<div class="syncbar" id="syncBar" hidden></div>
 <div class="sum" id="sum"></div>
 <main id="scroller"></main>
 <button class="fab" id="fab" aria-label="New block">+</button>
@@ -273,30 +274,33 @@ function syncApi() {
   return `/api/sync?id=${encodeURIComponent(SHARED_SYNC)}`;
 }
 function updateSyncBanner() {
-  const el = $('#syncBar');
+  const el = $('#syncChip');
   if (!el) return;
-  const n = (state.blocks || []).length;
+  el.classList.remove('on', 'err');
   if (syncStatus === 'local') {
-    el.hidden = false;
-    el.innerHTML = `<span>Open https://timeblocker-phi.vercel.app on both devices to sync.</span>`;
+    el.innerHTML = `<span class="dot"></span>Local`;
+    el.title = 'Open the Vercel site to sync across devices';
     return;
   }
   if (syncStatus === 'err') {
-    el.hidden = false;
-    el.innerHTML = `<span>Sync offline — will retry. ${n} block${n === 1 ? '' : 's'} on this device.</span><button class="btn" data-syncnow type="button">Retry</button>`;
+    el.classList.add('err');
+    el.innerHTML = `<span class="dot"></span>Retry`;
+    el.title = 'Sync offline — tap to retry';
     return;
   }
   if (syncStatus === 'saving') {
-    el.hidden = false;
-    el.innerHTML = `<span>Saving to your other devices…</span>`;
+    el.innerHTML = `<span class="dot"></span>Saving`;
+    el.title = 'Saving to your other devices';
     return;
   }
   if (syncStatus === 'on') {
-    el.hidden = false;
-    el.innerHTML = `<span>Synced · ${n} block${n === 1 ? '' : 's'} · same calendar on phone &amp; PC</span><button class="btn" data-syncnow type="button">Sync now</button>`;
+    el.classList.add('on');
+    el.innerHTML = `<span class="dot"></span>Synced`;
+    el.title = 'Synced — tap to sync now';
     return;
   }
-  el.hidden = true;
+  el.innerHTML = `<span class="dot"></span>…`;
+  el.title = 'Sync';
 }
 function scheduleSyncPush() {
   if (!syncApi()) return;
@@ -891,8 +895,7 @@ $('#fab').onclick = () => {
     newBlock(t, s, s + S.defDur);
   } else newBlock(V.days[0], 9 * 60, 9 * 60 + S.defDur);
 };
-document.onclick = e => {
-  if (!e.target.closest('[data-syncnow]')) return;
+$('#syncChip').onclick = () => {
   syncPull().then(() => syncPush()).then(() => toast(syncStatus === 'on' ? 'Synced' : 'Sync failed — try again'));
 };
 addEventListener('keydown', e => {
