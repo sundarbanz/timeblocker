@@ -1,6 +1,6 @@
 # Blocks
 
-A time blocking calendar. Static site: no build step, no frontend dependencies.
+A static Mon–Sun week template for time blocking. No calendar dates — just your repeating week. No build step, no frontend dependencies.
 
 ## Deploy to Vercel
 

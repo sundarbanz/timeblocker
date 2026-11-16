@@ -44,9 +44,7 @@ button{cursor:pointer;border:0;background:none;padding:0}
 .top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px 8px}
 .top-l,.top-r{display:flex;align-items:center;gap:6px}
 .top-l{flex:1;min-width:0}
-.title{position:relative;font-size:19px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 6px;border-radius:8px;margin-left:2px}
-.title:hover{background:var(--line-soft)}
-#jump{position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none}
+.title{position:relative;font-size:19px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 6px;border-radius:8px;margin-left:2px;cursor:default}
 .btn{height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
 .btn:hover{border-color:var(--muted)}
 .btn.icon{width:36px;padding:0}
@@ -75,11 +73,11 @@ button{cursor:pointer;border:0;background:none;padding:0}
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:contain;touch-action:pan-y}
 .head,.body{display:grid;grid-template-columns:var(--gutter) repeat(var(--cols),minmax(0,1fr))}
 .head{position:sticky;top:0;z-index:6;background:var(--surface);border-bottom:1px solid var(--line)}
-.dayhead{display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 0 6px;border-left:1px solid var(--line-soft)}
-.dow{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
-.dnum{font-size:17px;font-weight:700;width:30px;height:30px;line-height:30px;border-radius:50%;text-align:center}
+.dayhead{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:10px 0 9px;border-left:1px solid var(--line-soft)}
+.dow{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.dlab{font-size:15px;font-weight:700;width:34px;height:34px;line-height:34px;border-radius:50%;text-align:center}
 .dayhead.today .dow{color:var(--accent)}
-.dayhead.today .dnum{background:var(--accent);color:var(--on-accent)}
+.dayhead.today .dlab{background:var(--accent);color:var(--on-accent)}
 .body{position:relative;padding-bottom:0;margin-bottom:96px}
 .gutter{position:relative}
 .gutter span{position:absolute;right:8px;transform:translateY(-50%);font-size:10.5px;font-weight:600;color:var(--muted);white-space:nowrap}
@@ -184,7 +182,7 @@ input[type=color]{width:38px;height:38px;padding:0;border:1px solid var(--line);
     <button class="btn icon" id="next" aria-label="Next">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>
     </button>
-    <button class="title" id="title" aria-label="Jump to date"><span id="titleText"></span><input type="date" id="jump" tabindex="-1" aria-hidden="true"></button>
+    <div class="title" id="title"><span id="titleText"></span></div>
     <span style="flex:1"></span>
     <button class="btn" id="today">Today</button>
     <button class="syncchip" id="syncChip" type="button" title="Sync now" aria-label="Sync status">…</button>
@@ -240,9 +238,23 @@ const BACKUP_KEY = 'blocks.v1.backup';
 const SNAPS_KEY = 'blocks.v1.snaps';
 let lastRemoteCount = 0;
 
+function normalizeBlock(b) {
+  if (!b || typeof b !== 'object') return null;
+  if (typeof b.dow !== 'number') {
+    try { b.dow = b.date ? parse(b.date).getDay() : 1; } catch (e) { b.dow = 1; }
+  }
+  b.dow = ((Number(b.dow) % 7) + 7) % 7;
+  if (b.done && typeof b.done === 'object' && !Array.isArray(b.done)) b.done = Object.values(b.done).some(Boolean);
+  else b.done = !!b.done;
+  if (typeof b.start !== 'number') b.start = 0;
+  if (typeof b.end !== 'number') b.end = b.start + 60;
+  return b;
+}
 function adopt(raw) {
   const d = defaults();
-  const blocks = raw && Array.isArray(raw.blocks) ? raw.blocks.filter(b => b && typeof b === 'object') : [];
+  const blocks = raw && Array.isArray(raw.blocks)
+    ? raw.blocks.map(normalizeBlock).filter(Boolean)
+    : [];
   state = {
     settings: { ...d.settings, ...(raw && raw.settings) },
     categories: raw && Array.isArray(raw.categories) && raw.categories.length ? raw.categories : d.categories,
@@ -250,6 +262,7 @@ function adopt(raw) {
     seenHint: !!(raw && raw.seenHint),
     fullDay: !!(raw && raw.fullDay),
     weekTemplate: !!(raw && raw.weekTemplate),
+    staticWeek: !!(raw && raw.staticWeek),
     syncId: raw && typeof raw.syncId === 'string' ? raw.syncId : null,
     updatedAt: raw && Number(raw.updatedAt) || 0,
     emptyPushOk: !!(raw && raw.emptyPushOk)
@@ -286,11 +299,25 @@ function save(opts) {
   if (!opts || opts.sync !== false) scheduleSyncPush();
 }
 load();
-/* Settings-only migrations. Never delete or rewrite block contents on deploy. */
+/* Settings-only migrations. Never delete blocks on deploy. */
 if (!state.fullDay) { S.dayStart = 0; S.dayEnd = 24; state.fullDay = true; save({ sync: false }); }
 if (!state.weekTemplate) {
   B.forEach(b => { if (!b.repeat || b.repeat === 'none') b.repeat = 'weekly'; });
   state.weekTemplate = true;
+  save({ sync: false });
+}
+/* Convert dated calendar → static Mon–Sun week template (keeps all blocks). */
+if (!state.staticWeek) {
+  B.forEach(b => {
+    if (typeof b.dow !== 'number') {
+      try { b.dow = b.date ? parse(b.date).getDay() : new Date().getDay(); }
+      catch (e) { b.dow = 1; }
+    }
+    b.dow = ((Number(b.dow) % 7) + 7) % 7;
+    if (b.done && typeof b.done === 'object' && !Array.isArray(b.done)) b.done = Object.values(b.done).some(Boolean);
+    else b.done = !!b.done;
+  });
+  state.staticWeek = true;
   save({ sync: false });
 }
 if ((state.blocks || []).length) snapshot('boot');
@@ -390,6 +417,7 @@ function applyMerged(remote, blocks, cats) {
     syncId: SHARED_SYNC,
     fullDay: true,
     weekTemplate: true,
+    staticWeek: true,
     seenHint: state.seenHint || !!(remote && remote.seenHint),
     emptyPushOk: false,
     updatedAt: Date.now()
@@ -479,8 +507,19 @@ async function ensureSync() {
   updateSyncBanner();
 }
 
+const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const dayKey = dow => `w${((Number(dow) % 7) + 7) % 7}`;
+const keyDow = k => Number(String(k).replace(/^w/, '')) || 0;
+function blockDow(b) {
+  if (typeof b.dow === 'number') return ((b.dow % 7) + 7) % 7;
+  if (b.date) { try { return parse(b.date).getDay(); } catch (e) {} }
+  return 1;
+}
+function todayKey() { return dayKey(new Date().getDay()); }
+
 let view = S.view === 'auto' ? (innerWidth < 720 ? 'day' : 'week') : S.view;
-let cursor = todayStr();
+let cursor = todayKey();
 let V = { days: [], a: 0, b: 1440 };
 let drag = null, suppressUntil = 0, firstScroll = true;
 
@@ -514,30 +553,33 @@ function applyTheme() {
 mq.addEventListener('change', applyTheme);
 
 /* ---------- data helpers ---------- */
-function occursOn(b, d) {
-  if (!b.repeat || b.repeat === 'none') return b.date === d;
-  if (d < b.date) return false;
-  if (b.exDates && b.exDates.includes(d)) return false;
-  const dow = parse(d).getDay();
-  if (b.repeat === 'daily') return true;
-  if (b.repeat === 'weekdays') return dow >= 1 && dow <= 5;
-  if (b.repeat === 'weekly') return dow === parse(b.date).getDay();
-  return false;
-}
+const occursOn = (b, d) => blockDow(b) === keyDow(d);
 const occ = d => B.filter(b => occursOn(b, d));
 const byId = id => B.find(b => b.id === id);
-const isRep = b => b.repeat && b.repeat !== 'none';
 
-function visibleDays() {
-  if (view === 'day') return [cursor];
-  if (view === '3day') return [cursor, addDays(cursor, 1), addDays(cursor, 2)];
-  const dow = parse(cursor).getDay();
-  const start = addDays(cursor, -((dow - S.weekStart + 7) % 7));
-  let days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  if (!S.weekends) days = days.filter(d => { const w = parse(d).getDay(); return w !== 0 && w !== 6; });
-  return days;
+function allWeekKeys() {
+  let keys = Array.from({ length: 7 }, (_, i) => dayKey((S.weekStart + i) % 7));
+  if (!S.weekends) keys = keys.filter(k => { const d = keyDow(k); return d !== 0 && d !== 6; });
+  return keys;
 }
-function nav(dir) { cursor = addDays(cursor, dir * (view === 'day' ? 1 : view === '3day' ? 3 : 7)); render(); }
+function visibleDays() {
+  const week = allWeekKeys();
+  if (!week.includes(cursor)) cursor = week[0] || todayKey();
+  if (view === 'day') return [cursor];
+  if (view === '3day') {
+    const i = Math.max(0, week.indexOf(cursor));
+    return [0, 1, 2].map(o => week[(i + o) % week.length]);
+  }
+  return week;
+}
+function nav(dir) {
+  if (view === 'week') return;
+  const week = allWeekKeys();
+  const i = Math.max(0, week.indexOf(cursor));
+  const step = view === 'day' ? 1 : 3;
+  cursor = week[(i + dir * step + week.length * 20) % week.length];
+  render();
+}
 
 function layout(items) {
   items.sort((x, y) => x.start - y.start || y.end - x.end);
@@ -554,20 +596,18 @@ function layout(items) {
 
 /* ---------- render ---------- */
 function titleText(days) {
-  const a = parse(days[0]), b = parse(days[days.length - 1]);
-  if (days.length === 1) return a.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  const A = a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  const Bt = a.getMonth() === b.getMonth() ? b.getDate() : b.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${A} – ${Bt}, ${b.getFullYear()}`;
+  if (days.length === 1) return DOW_LONG[keyDow(days[0])];
+  if (days.length === 7 || (days.length >= 5 && !S.weekends)) return 'Week template';
+  return `${DOW_SHORT[keyDow(days[0])]} – ${DOW_SHORT[keyDow(days[days.length - 1])]}`;
 }
 function renderSum(days) {
   const tot = {}; let all = 0, done = 0;
   for (const d of days) for (const b of occ(d)) {
     const m = b.end - b.start, id = cat(b.cat).id;
-    tot[id] = (tot[id] || 0) + m; all += m; if (b.done && b.done[d]) done += m;
+    tot[id] = (tot[id] || 0) + m; all += m; if (b.done) done += m;
   }
   const el = $('#sum');
-  if (!all) { el.innerHTML = `<span>Nothing planned ${days.length > 1 ? 'in this range' : 'for this day'} yet — tap a slot to add a block.</span>`; return; }
+  if (!all) { el.innerHTML = `<span>Nothing planned ${days.length > 1 ? 'in this stretch' : 'for this day'} yet — tap a slot to add a block.</span>`; return; }
   const ids = Object.keys(tot).sort((x, y) => tot[y] - tot[x]);
   el.innerHTML = `<span><b>${fmtDur(all)}</b> planned${done ? ` · <b>${fmtDur(done)}</b> done` : ''}</span>
     <span class="sum-bar">${ids.map(id => `<i style="width:${tot[id] / all * 100}%;background:${esc(cat(id).color)}"></i>`).join('')}</span>
@@ -579,15 +619,15 @@ function render() {
   let a = S.dayStart * 60, b = S.dayEnd * 60;
   for (const d of days) for (const o of occ(d)) { a = Math.min(a, Math.floor(o.start / 60) * 60); b = Math.max(b, Math.ceil(o.end / 60) * 60); }
   V = { days, a, b };
-  const hh = S.hourHeight, y = m => (m - a) / 60 * hh, today = todayStr();
+  const hh = S.hourHeight, y = m => (m - a) / 60 * hh, today = todayKey();
   $('#titleText').textContent = titleText(days);
   document.querySelectorAll('#views button').forEach(x => x.classList.toggle('on', x.dataset.v === view));
   renderSum(days);
 
   let h = `<div style="--cols:${days.length};--hh:${hh}px"><div class="head"><div></div>`;
   for (const d of days) {
-    const dt = parse(d);
-    h += `<button class="dayhead${d === today ? ' today' : ''}" data-date="${d}"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="dnum">${dt.getDate()}</span></button>`;
+    const dow = keyDow(d);
+    h += `<button class="dayhead${d === today ? ' today' : ''}" data-date="${d}"><span class="dow">${DOW_SHORT[dow]}</span><span class="dlab">${DOW_SHORT[dow].slice(0, 1)}</span></button>`;
   }
   h += `</div><div class="body" style="height:${y(b)}px"><div class="gutter">`;
   for (let m = a + 60; m < b; m += 60) {
@@ -601,11 +641,11 @@ function render() {
     layout(items);
     h += `<div class="col${d === today ? ' today' : ''}" data-date="${d}">`;
     for (const it of items) {
-      const o = it.b, ht = Math.max(18, y(o.end) - y(o.start) - 2), done = o.done && o.done[d];
+      const o = it.b, ht = Math.max(18, y(o.end) - y(o.start) - 2), done = !!o.done;
       h += `<div class="blk${done ? ' done' : ''}${ht < 36 ? ' short' : ''}${ht < 22 ? ' tiny' : ''}" data-id="${o.id}" data-date="${d}"
         style="top:${y(o.start) + 1}px;height:${ht}px;left:calc(${it.col / it.cols * 100}% + 2px);width:calc(${100 / it.cols}% - 4px);--c:${esc(cat(o.cat).color)}">
         <button class="blk-check" aria-label="Toggle done"></button>
-        <div class="blk-title">${esc(o.title || 'Untitled')}${isRep(o) ? ' ↻' : ''}</div>
+        <div class="blk-title">${esc(o.title || 'Untitled')}</div>
         <div class="blk-time">${fmt(o.start)} – ${fmt(o.end)}</div><div class="blk-handle"></div></div>`;
     }
     if (d === today) {
@@ -712,15 +752,9 @@ function endDrag(cancel) {
   suppressUntil = Date.now() + 450;
   if (d.mode === 'create') { render(); return newBlock(d.date, d.start, d.end); }
   const b = d.b;
-  if (isRep(b)) { // detach just this occurrence
-    (b.exDates = b.exDates || []).push(d.occ);
-    B.push({ ...b, id: uid(), date: d.date, start: d.start, end: d.end, repeat: 'none', exDates: [],
-      done: b.done && b.done[d.occ] ? { [d.date]: true } : {} });
-    if (b.done) delete b.done[d.occ];
-  } else {
-    if (b.done && b.done[b.date] && d.date !== b.date) { delete b.done[b.date]; b.done[d.date] = true; }
-    b.date = d.date; b.start = d.start; b.end = d.end;
-  }
+  b.dow = keyDow(d.date);
+  b.start = d.start;
+  b.end = d.end;
   save(); render();
 }
 
@@ -764,8 +798,8 @@ scroller.addEventListener('click', e => {
   if (Date.now() < suppressUntil) return;
   const blk = e.target.closest('.blk');
   if (e.target.closest('.blk-check') && blk) {
-    const b = byId(blk.dataset.id), d = blk.dataset.date; if (!b) return;
-    b.done = b.done || {}; if (b.done[d]) delete b.done[d]; else b.done[d] = true;
+    const b = byId(blk.dataset.id); if (!b) return;
+    b.done = !b.done;
     save(); return render();
   }
   if (blk) { const b = byId(blk.dataset.id); return b && openEditor(b, blk.dataset.date, false); }
@@ -797,27 +831,24 @@ function copyBlock(b) {
     title: b.title || '',
     cat: b.cat || C[0].id,
     notes: b.notes || '',
-    repeat: b.repeat || 'weekly',
     dur
   });
   lastBlock = b;
   toast('Copied — tap an empty slot to paste');
 }
-function pasteBlock(date, start) {
+function pasteBlock(day, start) {
   if (!clip) return false;
   start = clamp(start, 0, 1440 - S.slot);
   const end = clamp(start + clip.dur, start + S.slot, 1440);
   const b = {
     id: uid(),
     title: clip.title,
-    date,
+    dow: keyDow(day),
     start,
     end,
     cat: C.some(c => c.id === clip.cat) ? clip.cat : C[0].id,
     notes: clip.notes || '',
-    repeat: clip.repeat || 'weekly',
-    done: {},
-    exDates: []
+    done: false
   };
   B.push(b);
   lastBlock = b;
@@ -827,19 +858,19 @@ function pasteBlock(date, start) {
   return true;
 }
 
-function newBlock(date, start, end) {
+function newBlock(day, start, end) {
   start = clamp(start, 0, 1440 - S.slot); end = clamp(end, start + S.slot, 1440);
-  openEditor({ id: uid(), title: '', date, start, end, cat: C[0].id, notes: '', repeat: 'weekly', done: {}, exDates: [] }, date, true);
+  openEditor({ id: uid(), title: '', dow: keyDow(day), start, end, cat: C[0].id, notes: '', done: false }, day, true);
 }
-function openEditor(b, date, isNew) {
+function openEditor(b, day, isNew) {
   lastBlock = b;
-  const rep = isRep(b), nice = parse(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
-  const dowLong = parse(b.date || date).toLocaleDateString(undefined, { weekday: 'long' });
+  const dow = typeof b.dow === 'number' ? b.dow : keyDow(day);
+  const dowOpts = allWeekKeys().map(k => [String(keyDow(k)), DOW_LONG[keyDow(k)]]);
   openSheet(`<form id="edf" novalidate>
     <div class="sheet-head"><h2>${isNew ? 'New block' : 'Edit block'}</h2><button type="button" class="btn icon ghost" data-close aria-label="Close">✕</button></div>
     <input class="title-in" id="e-title" placeholder="What's this block for?" value="${esc(b.title)}" autocomplete="off" enterkeyhint="done">
     <div class="rows">
-      <label class="field m-wide wide">${rep ? 'Repeats from' : 'Date'}<input type="date" id="e-date" value="${b.date}"></label>
+      <label class="field m-wide wide">Day<select id="e-dow">${opts(dowOpts, String(dow))}</select></label>
       <label class="field">Start<input type="time" id="e-start" value="${toHHMM(b.start)}" step="${S.slot * 60}"></label>
       <label class="field">End<input type="time" id="e-end" value="${toHHMM(b.end)}" step="${S.slot * 60}"></label>
     </div>
@@ -847,20 +878,12 @@ function openEditor(b, date, isNew) {
     <div class="field">Category</div>
     <div class="chips">${C.map(c => `<label class="chip"><input type="radio" name="cat" value="${esc(c.id)}"${cat(b.cat).id === c.id ? ' checked' : ''}><span style="--c:${esc(c.color)}"><i></i>${esc(c.name)}</span></label>`).join('')}</div>
     <div class="rows">
-      <label class="field wide">Repeat<select id="e-rep">${opts([
-        ['weekly', `Every ${dowLong}`],
-        ['none', 'Just this day'],
-        ['daily', 'Every day'],
-        ['weekdays', 'Weekdays (Mon–Fri)']
-      ], b.repeat || 'weekly')}</select></label>
       <label class="field wide">Notes<textarea id="e-notes" placeholder="Optional">${esc(b.notes)}</textarea></label>
     </div>
-    ${isNew ? '<p class="hint">Defaults to every ' + dowLong + '. Pick “Just this day” for a one-off.</p>' : ''}
-    ${isNew ? '' : `<label class="check"><input type="checkbox" id="e-done"${b.done && b.done[date] ? ' checked' : ''}> Done${rep ? ` on ${nice}` : ''}</label>`}
-    ${rep && !isNew ? '<p class="hint">Edits here change every ' + dowLong + '. Dragging or “Delete this day” only affects that date.</p>' : ''}
+    <p class="hint">This is your repeating week template — every ${DOW_LONG[dow]} looks like this.</p>
+    ${isNew ? '' : `<label class="check"><input type="checkbox" id="e-done"${b.done ? ' checked' : ''}> Done</label>`}
     <div class="actions">
-      ${isNew ? '' : '<button type="button" class="btn" data-copy>Copy</button>'}
-      ${isNew ? '' : rep ? '<button type="button" class="btn danger" data-del="one">Delete this day</button><button type="button" class="btn danger" data-del="all">Delete all</button>' : '<button type="button" class="btn danger" data-del="all">Delete</button>'}
+      ${isNew ? '' : '<button type="button" class="btn" data-copy>Copy</button><button type="button" class="btn danger" data-del="all">Delete</button>'}
       <span class="sp"></span>
       <button type="submit" class="btn primary">${isNew ? 'Add block' : 'Save'}</button>
     </div></form>`);
@@ -873,28 +896,24 @@ function openEditor(b, date, isNew) {
         start: toMin($('#e-start').value),
         end: toMin($('#e-end').value),
         cat: (sheet.querySelector('input[name=cat]:checked') || {}).value || b.cat,
-        notes: $('#e-notes').value.trim(),
-        repeat: $('#e-rep').value
+        notes: $('#e-notes').value.trim()
       });
       closeSheet();
       return;
     }
     const del = e.target.closest('[data-del]'); if (!del) return;
-    if (del.dataset.del === 'one') (b.exDates = b.exDates || []).push(date);
-    else { const i = B.indexOf(b); if (i >= 0) B.splice(i, 1); }
+    const i = B.indexOf(b); if (i >= 0) B.splice(i, 1);
     save(); closeSheet(); render();
   };
   sheet.onsubmit = e => {
     e.preventDefault();
-    const start = toMin($('#e-start').value), end = toMin($('#e-end').value), nd = $('#e-date').value;
-    if (!nd || isNaN(start) || isNaN(end)) return $('#e-err').textContent = 'Pick a date, start and end time.';
+    const start = toMin($('#e-start').value), end = toMin($('#e-end').value), nd = Number($('#e-dow').value);
+    if (Number.isNaN(nd) || isNaN(start) || isNaN(end)) return $('#e-err').textContent = 'Pick a day, start and end time.';
     if (end <= start) return $('#e-err').textContent = 'End time has to be after the start time.';
-    const wasDone = isNew ? false : $('#e-done').checked;
-    b.title = $('#e-title').value.trim(); b.start = start; b.end = end; b.date = nd;
+    b.title = $('#e-title').value.trim(); b.start = start; b.end = end; b.dow = nd;
     b.cat = (sheet.querySelector('input[name=cat]:checked') || {}).value || C[0].id;
-    b.repeat = $('#e-rep').value; b.notes = $('#e-notes').value.trim(); b.done = b.done || {};
-    if (isRep(b)) { if (wasDone) b.done[date] = true; else delete b.done[date]; }
-    else { b.done = wasDone ? { [nd]: true } : {}; b.exDates = []; }
+    b.notes = $('#e-notes').value.trim();
+    b.done = isNew ? false : $('#e-done').checked;
     if (isNew) B.push(b);
     save(); closeSheet(); render();
   };
@@ -1029,22 +1048,13 @@ function toast(msg) {
 /* ---------- chrome ---------- */
 $('#prev').onclick = () => nav(-1);
 $('#next').onclick = () => nav(1);
-$('#today').onclick = () => { cursor = todayStr(); firstScroll = true; render(); };
+$('#today').onclick = () => { cursor = todayKey(); firstScroll = true; render(); };
 $('#gear').onclick = openSettings;
 $('#views').onclick = e => { const b = e.target.closest('button'); if (b) { view = b.dataset.v; render(); } };
-const jump = $('#jump');
-$('#title').onclick = e => {
-  if (e.target === jump) return;
-  jump.value = cursor;
-  try { jump.showPicker(); } catch (err) { jump.style.pointerEvents = 'auto'; jump.focus(); jump.click(); }
-};
-jump.onchange = () => { if (jump.value) { cursor = jump.value; render(); } };
 $('#fab').onclick = () => {
-  const t = todayStr();
-  if (V.days.includes(t)) {
-    const n = new Date(), s = Math.min(1440 - S.defDur, Math.ceil((n.getHours() * 60 + n.getMinutes() + 1) / 30) * 30);
-    newBlock(t, s, s + S.defDur);
-  } else newBlock(V.days[0], 9 * 60, 9 * 60 + S.defDur);
+  const t = V.days.includes(todayKey()) ? todayKey() : (V.days[0] || todayKey());
+  const n = new Date(), s = Math.min(1440 - S.defDur, Math.ceil((n.getHours() * 60 + n.getMinutes() + 1) / 30) * 30);
+  newBlock(t, s, s + S.defDur);
 };
 $('#syncChip').onclick = () => {
   syncPull().then(() => syncPush()).then(() => toast(syncStatus === 'on' ? 'Synced' : 'Sync failed — try again'));
@@ -1061,7 +1071,7 @@ addEventListener('keydown', e => {
     if (k === 'c' && lastBlock && !overlay.classList.contains('open')) { e.preventDefault(); copyBlock(lastBlock); return; }
     if (k === 'v' && clip && !overlay.classList.contains('open')) {
       e.preventDefault();
-      const day = V.days.includes(todayStr()) ? todayStr() : V.days[0];
+      const day = V.days.includes(todayKey()) ? todayKey() : (V.days[0] || todayKey());
       const n = new Date(), s = Math.min(1440 - clip.dur, Math.floor((n.getHours() * 60 + n.getMinutes()) / S.slot) * S.slot);
       pasteBlock(day, s);
       return;
@@ -1074,7 +1084,7 @@ addEventListener('keydown', e => {
   else if (k === 'd') { view = 'day'; render(); } else if (k === '3') { view = '3day'; render(); } else if (k === 'w') { view = 'week'; render(); }
   else if (k === 'c' && lastBlock) copyBlock(lastBlock);
   else if (k === 'v' && clip) {
-    const day = V.days.includes(todayStr()) ? todayStr() : V.days[0];
+    const day = V.days.includes(todayKey()) ? todayKey() : (V.days[0] || todayKey());
     const n = new Date(), s = Math.min(1440 - clip.dur, Math.floor((n.getHours() * 60 + n.getMinutes()) / S.slot) * S.slot);
     pasteBlock(day, s);
   }
