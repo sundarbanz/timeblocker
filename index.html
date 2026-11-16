@@ -242,6 +242,7 @@ function adopt(raw) {
     blocks: raw && Array.isArray(raw.blocks) ? raw.blocks : [],
     seenHint: !!(raw && raw.seenHint),
     fullDay: !!(raw && raw.fullDay),
+    weekTemplate: !!(raw && raw.weekTemplate),
     syncId: raw && typeof raw.syncId === 'string' ? raw.syncId : null,
     updatedAt: raw && Number(raw.updatedAt) || 0
   };
@@ -257,6 +258,12 @@ function save(opts) {
 load();
 /* One-shot: expand truncated day window to continuous 12am → 12am. */
 if (!state.fullDay) { S.dayStart = 0; S.dayEnd = 24; state.fullDay = true; save({ sync: false }); }
+/* One-shot: existing one-off blocks become weekly weekday templates. */
+if (!state.weekTemplate) {
+  B.forEach(b => { if (!b.repeat || b.repeat === 'none') b.repeat = 'weekly'; });
+  state.weekTemplate = true;
+  save({ sync: false });
+}
 
 /* ---------- cross-device sync ---------- */
 function newSyncId() {
@@ -698,10 +705,11 @@ const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}"${String(v
 
 function newBlock(date, start, end) {
   start = clamp(start, 0, 1440 - S.slot); end = clamp(end, start + S.slot, 1440);
-  openEditor({ id: uid(), title: '', date, start, end, cat: C[0].id, notes: '', repeat: 'none', done: {}, exDates: [] }, date, true);
+  openEditor({ id: uid(), title: '', date, start, end, cat: C[0].id, notes: '', repeat: 'weekly', done: {}, exDates: [] }, date, true);
 }
 function openEditor(b, date, isNew) {
   const rep = isRep(b), nice = parse(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const dowLong = parse(b.date || date).toLocaleDateString(undefined, { weekday: 'long' });
   openSheet(`<form id="edf" novalidate>
     <div class="sheet-head"><h2>${isNew ? 'New block' : 'Edit block'}</h2><button type="button" class="btn icon ghost" data-close aria-label="Close">✕</button></div>
     <input class="title-in" id="e-title" placeholder="What's this block for?" value="${esc(b.title)}" autocomplete="off" enterkeyhint="done">
@@ -714,11 +722,17 @@ function openEditor(b, date, isNew) {
     <div class="field">Category</div>
     <div class="chips">${C.map(c => `<label class="chip"><input type="radio" name="cat" value="${esc(c.id)}"${cat(b.cat).id === c.id ? ' checked' : ''}><span style="--c:${esc(c.color)}"><i></i>${esc(c.name)}</span></label>`).join('')}</div>
     <div class="rows">
-      <label class="field wide">Repeat<select id="e-rep">${opts([['none', 'Does not repeat'], ['daily', 'Every day'], ['weekdays', 'Weekdays (Mon–Fri)'], ['weekly', 'Every week']], b.repeat || 'none')}</select></label>
+      <label class="field wide">Repeat<select id="e-rep">${opts([
+        ['weekly', `Every ${dowLong}`],
+        ['none', 'Just this day'],
+        ['daily', 'Every day'],
+        ['weekdays', 'Weekdays (Mon–Fri)']
+      ], b.repeat || 'weekly')}</select></label>
       <label class="field wide">Notes<textarea id="e-notes" placeholder="Optional">${esc(b.notes)}</textarea></label>
     </div>
+    ${isNew ? '<p class="hint">Defaults to every ' + dowLong + '. Pick “Just this day” for a one-off.</p>' : ''}
     ${isNew ? '' : `<label class="check"><input type="checkbox" id="e-done"${b.done && b.done[date] ? ' checked' : ''}> Done${rep ? ` on ${nice}` : ''}</label>`}
-    ${rep && !isNew ? '<p class="hint">Edits here apply to every repeat. Dragging a block on the calendar moves only that day.</p>' : ''}
+    ${rep && !isNew ? '<p class="hint">Edits here change every ' + dowLong + '. Dragging or “Delete this day” only affects that date.</p>' : ''}
     <div class="actions">
       ${isNew ? '' : rep ? '<button type="button" class="btn danger" data-del="one">Delete this day</button><button type="button" class="btn danger" data-del="all">Delete all</button>' : '<button type="button" class="btn danger" data-del="all">Delete</button>'}
       <span class="sp"></span>
