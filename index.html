@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Blocks — time blocking</title>
+<meta name="description" content="A fast, customizable time blocking calendar.">
+<meta name="theme-color" content="#f5f3ee">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Blocks">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root{
+  --bg:#f5f3ee; --surface:#fffdf8; --ink:#1c1a16; --muted:#7b766b;
+  --line:#e0dbcf; --line-soft:#ece8de; --accent:#e2562b; --on-accent:#fff;
+  --gutter:52px; --hh:56px; --mix:16%;
+  --shadow:0 12px 40px rgba(30,25,15,.18);
+  color-scheme:light;
+}
+[data-theme=dark]{
+  --bg:#121110; --surface:#1b1a18; --ink:#ebe7de; --muted:#958f82;
+  --line:#2e2c27; --line-soft:#22211e; --mix:26%;
+  --shadow:0 12px 40px rgba(0,0,0,.6);
+  color-scheme:dark;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg);color:var(--ink);
+  font:15px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;
+  display:flex;flex-direction:column;height:100dvh;overflow:hidden;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none;padding:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ---------- top bar ---------- */
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px 8px}
+.top-l,.top-r{display:flex;align-items:center;gap:6px}
+.top-l{flex:1;min-width:0}
+.title{position:relative;font-size:19px;font-weight:700;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:4px 6px;border-radius:8px;margin-left:2px}
+.title:hover{background:var(--line-soft)}
+#jump{position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none}
+.btn{height:36px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.btn:hover{border-color:var(--muted)}
+.btn.icon{width:36px;padding:0}
+.btn.primary{background:var(--accent);color:var(--on-accent);border-color:transparent}
+.btn.danger{color:#c9372c}
+.btn.ghost{border-color:transparent;background:none}
+.seg{display:inline-flex;background:var(--line-soft);border-radius:10px;padding:3px;gap:2px}
+.seg button{height:30px;padding:0 12px;border-radius:8px;font-weight:600;font-size:13px;color:var(--muted)}
+.seg button.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.12)}
+
+/* ---------- summary ---------- */
+.sum{display:flex;align-items:center;gap:12px;padding:0 16px 10px;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow-x:auto;scrollbar-width:none}
+.sum::-webkit-scrollbar{display:none}
+.sum b{color:var(--ink);font-weight:700}
+.sum-bar{flex:0 0 120px;height:6px;border-radius:3px;overflow:hidden;display:flex;background:var(--line)}
+.sum-bar i{display:block;height:100%}
+.sum-leg{display:inline-flex;align-items:center;gap:5px}
+.sum-leg i{width:8px;height:8px;border-radius:50%}
+
+/* ---------- grid ---------- */
+#scroller{flex:1;overflow-y:auto;overflow-x:hidden;border-top:1px solid var(--line);background:var(--surface);
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;overscroll-behavior:contain;touch-action:pan-y}
+.head,.body{display:grid;grid-template-columns:var(--gutter) repeat(var(--cols),minmax(0,1fr))}
+.head{position:sticky;top:0;z-index:6;background:var(--surface);border-bottom:1px solid var(--line)}
+.dayhead{display:flex;flex-direction:column;align-items:center;gap:1px;padding:7px 0 6px;border-left:1px solid var(--line-soft)}
+.dow{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.dnum{font-size:17px;font-weight:700;width:30px;height:30px;line-height:30px;border-radius:50%;text-align:center}
+.dayhead.today .dow{color:var(--accent)}
+.dayhead.today .dnum{background:var(--accent);color:var(--on-accent)}
+.body{position:relative;padding-bottom:0;margin-bottom:96px}
+.gutter{position:relative}
+.gutter span{position:absolute;right:8px;transform:translateY(-50%);font-size:10.5px;font-weight:600;color:var(--muted);white-space:nowrap}
+.col{position:relative;border-left:1px solid var(--line-soft);cursor:cell;
+  background-image:linear-gradient(to bottom,var(--line) 1px,transparent 1px),linear-gradient(to bottom,var(--line-soft) 1px,transparent 1px);
+  background-size:100% var(--hh),100% var(--hh);background-position:0 0,0 calc(var(--hh)/2);
+  border-bottom:1px solid var(--line)}
+.col.today{background-color:color-mix(in srgb,var(--accent) 4%,transparent)}
+
+.blk{position:absolute;border-radius:7px;padding:4px 22px 4px 8px;overflow:hidden;cursor:grab;
+  background:color-mix(in srgb,var(--c) var(--mix),var(--surface));border-left:3px solid var(--c);
+  box-shadow:0 0 0 1px var(--surface);transition:opacity .15s}
+.blk-title{font-size:13px;font-weight:650;line-height:1.25;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow-wrap:anywhere}
+.blk-time{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blk.short{padding-top:0;padding-bottom:0;display:flex;align-items:center}
+.blk.short .blk-title{-webkit-line-clamp:1;font-size:12px}
+.blk.short .blk-time{display:none}
+.blk.tiny .blk-check{display:none}
+.blk.done{opacity:.55}
+.blk.done .blk-title{text-decoration:line-through}
+.blk.lifting{opacity:.3}
+.blk-check{position:absolute;top:4px;right:4px;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--c);background:var(--surface)}
+.blk-check::before{content:"";position:absolute;inset:-8px}
+.blk.short .blk-check{top:50%;transform:translateY(-50%)}
+.blk.done .blk-check{background:var(--c) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M4 8.5l2.6 2.6L12 5.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/100% no-repeat}
+.blk-handle{position:absolute;left:0;right:0;bottom:0;height:8px;cursor:ns-resize}
+.dghost{position:absolute;left:2px;right:2px;border-radius:7px;border:1.5px dashed var(--accent);
+  background:color-mix(in srgb,var(--accent) 18%,transparent);z-index:4;pointer-events:none;
+  font-size:11.5px;font-weight:700;padding:3px 7px;color:var(--ink);overflow:hidden;white-space:nowrap}
+.now{position:absolute;left:0;right:0;height:0;border-top:2px solid var(--accent);z-index:3;pointer-events:none}
+.now::before{content:"";position:absolute;left:-5px;top:-6px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+body.dragging,body.dragging *{cursor:grabbing!important}
+
+.fab{position:fixed;right:calc(18px + env(safe-area-inset-right));bottom:calc(18px + env(safe-area-inset-bottom));width:56px;height:56px;border-radius:18px;
+  background:var(--accent);color:var(--on-accent);font-size:30px;line-height:1;font-weight:300;box-shadow:var(--shadow);z-index:10;display:grid;place-items:center}
+.fab:active{transform:scale(.96)}
+
+/* ---------- sheets ---------- */
+.overlay{position:fixed;inset:0;background:rgba(20,15,10,.45);display:none;align-items:flex-end;justify-content:center;z-index:50}
+.overlay.open{display:flex}
+.sheet{background:var(--surface);width:100%;max-width:520px;max-height:92dvh;overflow-y:auto;border-radius:20px 20px 0 0;
+  padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:var(--shadow);animation:up .2s ease-out}
+@keyframes up{from{transform:translateY(24px);opacity:0}}
+.sheet-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.sheet-head h2{margin:0;font-size:17px;letter-spacing:-.01em}
+.sheet h3{margin:20px 0 8px;font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.field{display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;color:var(--muted);min-width:0}
+.field>input,.field>select,.field>textarea,.title-in{
+  width:100%;min-width:0;height:44px;padding:0 11px;border-radius:10px;border:1px solid var(--line);background:var(--bg);
+  font-size:16px;font-weight:500;color:var(--ink);-webkit-appearance:none;appearance:none}
+.field>textarea{height:76px;padding:10px 11px;resize:vertical}
+.field>select{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23888' stroke-width='1.8' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 11px center;background-size:11px;padding-right:30px}
+.title-in{height:50px;font-size:18px;font-weight:650;margin-bottom:12px}
+.rows{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.rows .wide{grid-column:1/-1}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:5px 0 12px}
+.chip input{position:absolute;opacity:0;pointer-events:none}
+.chip span{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border-radius:17px;border:1px solid var(--line);font-size:13.5px;font-weight:600;cursor:pointer}
+.chip i{width:9px;height:9px;border-radius:50%;background:var(--c)}
+.chip input:checked+span{border-color:var(--c);background:color-mix(in srgb,var(--c) var(--mix),var(--surface))}
+.chip input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.check{display:flex;align-items:center;gap:9px;font-size:14.5px;font-weight:600;margin:4px 0 2px;cursor:pointer}
+.check input{width:20px;height:20px;accent-color:var(--accent)}
+.hint{font-size:12px;color:var(--muted);margin:6px 0 0}
+.err{font-size:13px;color:#c9372c;font-weight:600;min-height:0;margin:0 0 8px}
+.actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.actions .sp{flex:1}
+.actions .btn{height:44px;padding:0 16px}
+.swatches{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sw{width:34px;height:34px;border-radius:50%;background:var(--c);border:3px solid var(--surface);box-shadow:0 0 0 1px var(--line)}
+.sw.on{box-shadow:0 0 0 2px var(--ink)}
+input[type=color]{width:38px;height:38px;padding:0;border:1px solid var(--line);border-radius:10px;background:none;flex:none;cursor:pointer}
+.field>input[type=range]{border:0;background:none;padding:0;height:36px;-webkit-appearance:auto;appearance:auto;accent-color:var(--accent)}
+.catrow{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.catrow input[type=text]{flex:1;min-width:0;height:40px;padding:0 11px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-size:16px}
+.toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);
+  padding:10px 16px;border-radius:12px;font-size:13.5px;font-weight:600;z-index:40;box-shadow:var(--shadow);max-width:calc(100vw - 32px);text-align:center;animation:up .2s}
+
+@media (min-width:720px){
+  .overlay{align-items:center}
+  .sheet{border-radius:18px;padding:18px 20px 20px}
+  .top{padding:12px 18px 10px}
+  .title{font-size:21px}
+}
+@media (max-width:719px){
+  :root{--gutter:44px}
+  .top-r{width:100%}
+  .top-r .seg{flex:1}
+  .top-r .seg button{flex:1;height:32px}
+  .rows .m-wide{grid-column:1/-1}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-l">
+    <button class="btn icon" id="prev" aria-label="Previous">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3L5 8l5 5"/></svg>
+    </button>
+    <button class="btn icon" id="next" aria-label="Next">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3l5 5-5 5"/></svg>
+    </button>
+    <button class="title" id="title" aria-label="Jump to date"><span id="titleText"></span><input type="date" id="jump" tabindex="-1" aria-hidden="true"></button>
+    <span style="flex:1"></span>
+    <button class="btn" id="today">Today</button>
+  </div>
+  <div class="top-r">
+    <div class="seg" id="views" role="tablist">
+      <button data-v="day">Day</button><button data-v="3day">3 days</button><button data-v="week">Week</button>
+    </div>
+    <button class="btn icon" id="gear" aria-label="Settings">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 5h6M12 5h4M2 13h3M9 13h7"/><circle cx="10" cy="5" r="2"/><circle cx="7" cy="13" r="2"/></svg>
+    </button>
+  </div>
+</header>
+<div class="sum" id="sum"></div>
+<main id="scroller"></main>
+<button class="fab" id="fab" aria-label="New block">+</button>
+<div class="overlay" id="overlay"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+
+<script>
+(() => {
+'use strict';
+const KEY = 'blocks.v1';
+const $ = (s, r = document) => r.querySelector(s);
+const pad = n => String(n).padStart(2, '0');
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Math.random().toString(36).slice(2, 10);
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parse = s => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
+const addDays = (s, n) => { const d = parse(s); d.setDate(d.getDate() + n); return ymd(d); };
+const todayStr = () => ymd(new Date());
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------- state ---------- */
+function defaults() {
+  let h12 = true;
+  try { h12 = !!new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12; } catch (e) {}
+  return {
+    settings: { theme: 'auto', accent: '#e2562b', weekStart: 1, hour12: h12, dayStart: 6, dayEnd: 22,
+      slot: 15, defDur: 60, hourHeight: 56, view: 'auto', weekends: true },
+    categories: [
+      { id: 'deep', name: 'Deep work', color: '#3f66e0' },
+      { id: 'meet', name: 'Meetings', color: '#d9822b' },
+      { id: 'admin', name: 'Admin', color: '#7a8594' },
+      { id: 'health', name: 'Health', color: '#2f9e6e' },
+      { id: 'learn', name: 'Learning', color: '#b757c9' },
+      { id: 'life', name: 'Personal', color: '#d64562' }
+    ],
+    blocks: [], seenHint: false
+  };
+}
+let state, S, C, B;
+function adopt(raw) {
+  const d = defaults();
+  state = {
+    settings: { ...d.settings, ...(raw && raw.settings) },
+    categories: raw && Array.isArray(raw.categories) && raw.categories.length ? raw.categories : d.categories,
+    blocks: raw && Array.isArray(raw.blocks) ? raw.blocks : [],
+    seenHint: !!(raw && raw.seenHint)
+  };
+  S = state.settings; C = state.categories; B = state.blocks;
+}
+function load() { let raw = null; try { raw = JSON.parse(localStorage.getItem(KEY)); } catch (e) {} adopt(raw); }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+load();
+
+let view = S.view === 'auto' ? (innerWidth < 720 ? 'day' : 'week') : S.view;
+let cursor = todayStr();
+let V = { days: [], a: 0, b: 1440 };
+let drag = null, suppressUntil = 0, firstScroll = true;
+
+const scroller = $('#scroller'), overlay = $('#overlay'), sheet = $('#sheet');
+
+/* ---------- formatting ---------- */
+function fmt(m) {
+  m = clamp(m, 0, 1440); const h = Math.floor(m / 60) % 24, mm = m % 60;
+  if (!S.hour12) return `${pad(h)}:${pad(mm)}`;
+  return `${h % 12 || 12}${mm ? ':' + pad(mm) : ''} ${h < 12 ? 'AM' : 'PM'}`;
+}
+const fmtDur = m => { const h = Math.floor(m / 60), r = m % 60; return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`; };
+const toHHMM = m => m >= 1440 ? '23:59' : `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+const toMin = s => { if (!s) return NaN; const [h, m] = s.split(':').map(Number); const v = h * 60 + m; return v === 1439 ? 1440 : v; };
+const cat = id => C.find(c => c.id === id) || C[0];
+function onColor(hex) {
+  const n = parseInt(hex.slice(1), 16), r = n >> 16, g = n >> 8 & 255, b = n & 255;
+  return (r * 299 + g * 587 + b * 114) / 1000 > 160 ? '#1c1a16' : '#fff';
+}
+
+/* ---------- theme ---------- */
+const mq = matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const dark = S.theme === 'dark' || (S.theme === 'auto' && mq.matches);
+  const r = document.documentElement;
+  r.dataset.theme = dark ? 'dark' : 'light';
+  r.style.setProperty('--accent', S.accent);
+  r.style.setProperty('--on-accent', onColor(S.accent));
+  $('meta[name=theme-color]').content = dark ? '#121110' : '#f5f3ee';
+}
+mq.addEventListener('change', applyTheme);
+
+/* ---------- data helpers ---------- */
+function occursOn(b, d) {
+  if (!b.repeat || b.repeat === 'none') return b.date === d;
+  if (d < b.date) return false;
+  if (b.exDates && b.exDates.includes(d)) return false;
+  const dow = parse(d).getDay();
+  if (b.repeat === 'daily') return true;
+  if (b.repeat === 'weekdays') return dow >= 1 && dow <= 5;
+  if (b.repeat === 'weekly') return dow === parse(b.date).getDay();
+  return false;
+}
+const occ = d => B.filter(b => occursOn(b, d));
+const byId = id => B.find(b => b.id === id);
+const isRep = b => b.repeat && b.repeat !== 'none';
+
+function visibleDays() {
+  if (view === 'day') return [cursor];
+  if (view === '3day') return [cursor, addDays(cursor, 1), addDays(cursor, 2)];
+  const dow = parse(cursor).getDay();
+  const start = addDays(cursor, -((dow - S.weekStart + 7) % 7));
+  let days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  if (!S.weekends) days = days.filter(d => { const w = parse(d).getDay(); return w !== 0 && w !== 6; });
+  return days;
+}
+function nav(dir) { cursor = addDays(cursor, dir * (view === 'day' ? 1 : view === '3day' ? 3 : 7)); render(); }
+
+function layout(items) {
+  items.sort((x, y) => x.start - y.start || y.end - x.end);
+  let cluster = [], cEnd = -1;
+  const flush = () => { const n = Math.max(...cluster.map(i => i.col)) + 1; cluster.forEach(i => i.cols = n); cluster = []; };
+  for (const it of items) {
+    if (cluster.length && it.start >= cEnd) { flush(); cEnd = -1; }
+    const used = new Set(cluster.filter(c => c.end > it.start).map(c => c.col));
+    let c = 0; while (used.has(c)) c++;
+    it.col = c; cluster.push(it); cEnd = Math.max(cEnd, it.end);
+  }
+  if (cluster.length) flush();
+}
+
+/* ---------- render ---------- */
+function titleText(days) {
+  const a = parse(days[0]), b = parse(days[days.length - 1]);
+  if (days.length === 1) return a.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const A = a.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const Bt = a.getMonth() === b.getMonth() ? b.getDate() : b.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `${A} – ${Bt}, ${b.getFullYear()}`;
+}
+function renderSum(days) {
+  const tot = {}; let all = 0, done = 0;
+  for (const d of days) for (const b of occ(d)) {
+    const m = b.end - b.start, id = cat(b.cat).id;
+    tot[id] = (tot[id] || 0) + m; all += m; if (b.done && b.done[d]) done += m;
+  }
+  const el = $('#sum');
+  if (!all) { el.innerHTML = `<span>Nothing planned ${days.length > 1 ? 'in this range' : 'for this day'} yet — tap a slot to add a block.</span>`; return; }
+  const ids = Object.keys(tot).sort((x, y) => tot[y] - tot[x]);
+  el.innerHTML = `<span><b>${fmtDur(all)}</b> planned${done ? ` · <b>${fmtDur(done)}</b> done` : ''}</span>
+    <span class="sum-bar">${ids.map(id => `<i style="width:${tot[id] / all * 100}%;background:${esc(cat(id).color)}"></i>`).join('')}</span>
+    ${ids.map(id => `<span class="sum-leg"><i style="background:${esc(cat(id).color)}"></i>${esc(cat(id).name)} ${fmtDur(tot[id])}</span>`).join('')}`;
+}
+function render() {
+  if (drag) return;
+  const days = visibleDays();
+  let a = S.dayStart * 60, b = S.dayEnd * 60;
+  for (const d of days) for (const o of occ(d)) { a = Math.min(a, Math.floor(o.start / 60) * 60); b = Math.max(b, Math.ceil(o.end / 60) * 60); }
+  V = { days, a, b };
+  const hh = S.hourHeight, y = m => (m - a) / 60 * hh, today = todayStr();
+  $('#titleText').textContent = titleText(days);
+  document.querySelectorAll('#views button').forEach(x => x.classList.toggle('on', x.dataset.v === view));
+  renderSum(days);
+
+  let h = `<div style="--cols:${days.length};--hh:${hh}px"><div class="head"><div></div>`;
+  for (const d of days) {
+    const dt = parse(d);
+    h += `<button class="dayhead${d === today ? ' today' : ''}" data-date="${d}"><span class="dow">${dt.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="dnum">${dt.getDate()}</span></button>`;
+  }
+  h += `</div><div class="body" style="height:${y(b)}px"><div class="gutter">`;
+  for (let m = a + 60; m < b; m += 60) {
+    const hr = m / 60;
+    h += `<span style="top:${y(m)}px">${S.hour12 ? `${hr % 12 || 12} ${hr < 12 ? 'AM' : 'PM'}` : `${pad(hr)}:00`}</span>`;
+  }
+  h += '</div>';
+  const minVis = 20 / hh * 60;
+  for (const d of days) {
+    const items = occ(d).map(o => ({ b: o, start: o.start, end: Math.max(o.end, o.start + minVis) }));
+    layout(items);
+    h += `<div class="col${d === today ? ' today' : ''}" data-date="${d}">`;
+    for (const it of items) {
+      const o = it.b, ht = Math.max(18, y(o.end) - y(o.start) - 2), done = o.done && o.done[d];
+      h += `<div class="blk${done ? ' done' : ''}${ht < 36 ? ' short' : ''}${ht < 22 ? ' tiny' : ''}" data-id="${o.id}" data-date="${d}"
+        style="top:${y(o.start) + 1}px;height:${ht}px;left:calc(${it.col / it.cols * 100}% + 2px);width:calc(${100 / it.cols}% - 4px);--c:${esc(cat(o.cat).color)}">
+        <button class="blk-check" aria-label="Toggle done"></button>
+        <div class="blk-title">${esc(o.title || 'Untitled')}${isRep(o) ? ' ↻' : ''}</div>
+        <div class="blk-time">${fmt(o.start)} – ${fmt(o.end)}</div><div class="blk-handle"></div></div>`;
+    }
+    if (d === today) {
+      const n = new Date(), nm = n.getHours() * 60 + n.getMinutes();
+      if (nm >= a && nm <= b) h += `<div class="now" style="top:${y(nm)}px"></div>`;
+    }
+    h += '</div>';
+  }
+  scroller.innerHTML = h + '</div></div>';
+  if (firstScroll) {
+    firstScroll = false;
+    const n = new Date(), nm = n.getHours() * 60 + n.getMinutes();
+    scroller.scrollTop = Math.max(0, y(Math.max(a, nm - 90)));
+  }
+}
+
+/* ---------- drag: move / resize / create ---------- */
+let ghost = null, raf = 0;
+function pointAt(x, y) {
+  const cols = [...scroller.querySelectorAll('.col')]; if (!cols.length) return null;
+  let col = cols.find(c => { const r = c.getBoundingClientRect(); return x >= r.left && x < r.right; });
+  if (!col) col = x < cols[0].getBoundingClientRect().left ? cols[0] : cols[cols.length - 1];
+  const r = col.getBoundingClientRect();
+  return { date: col.dataset.date, min: clamp(V.a + (y - r.top) / S.hourHeight * 60, 0, 1440) };
+}
+const snap = m => Math.round(m / S.slot) * S.slot;
+function startDrag(target, x, y, touch) {
+  if (target.closest('.blk-check,.head')) return false;
+  const p = pointAt(x, y); if (!p) return false;
+  const el = target.closest('.blk');
+  if (el) {
+    const b = byId(el.dataset.id); if (!b) return false;
+    const r = el.getBoundingClientRect();
+    const resize = !!target.closest('.blk-handle') || (touch && r.height > 44 && y > r.bottom - 16);
+    drag = { mode: resize ? 'resize' : 'move', b, occ: el.dataset.date, date: el.dataset.date, start: b.start, end: b.end, off: p.min - b.start, el };
+  } else if (target.closest('.col')) {
+    const a = Math.floor(p.min / S.slot) * S.slot;
+    drag = { mode: 'create', anchor: a, date: p.date, start: a, end: Math.min(1440, a + S.slot) };
+  } else return false;
+  Object.assign(drag, { touch, x0: x, y0: y, x, y, moved: false });
+  if (touch) { lift(); showGhost(); }
+  return true;
+}
+function lift() {
+  document.body.classList.add('dragging');
+  if (drag.el && drag.mode === 'move') drag.el.classList.add('lifting');
+  cancelAnimationFrame(raf); raf = requestAnimationFrame(autoTick);
+}
+function moveDrag(x, y) {
+  if (!drag) return;
+  drag.x = x; drag.y = y;
+  if (!drag.moved) {
+    if (Math.hypot(x - drag.x0, y - drag.y0) < 5) return;
+    drag.moved = true; if (!drag.touch) lift();
+  }
+  updateDrag();
+}
+function updateDrag() {
+  const p = pointAt(drag.x, drag.y); if (!p) return;
+  if (drag.mode === 'move') {
+    const dur = drag.b.end - drag.b.start;
+    drag.start = clamp(snap(p.min - drag.off), 0, 1440 - dur); drag.end = drag.start + dur; drag.date = p.date;
+  } else if (drag.mode === 'resize') {
+    drag.end = clamp(snap(p.min), drag.start + S.slot, 1440);
+  } else {
+    const c = snap(p.min);
+    drag.start = Math.min(drag.anchor, c); drag.end = Math.max(drag.anchor, c);
+    if (drag.end === drag.start) drag.end = Math.min(1440, drag.start + S.slot);
+  }
+  showGhost();
+}
+function showGhost() {
+  const col = scroller.querySelector(`.col[data-date="${drag.date}"]`); if (!col) return;
+  if (!ghost) { ghost = document.createElement('div'); ghost.className = 'dghost'; }
+  if (ghost.parentNode !== col) col.appendChild(ghost);
+  const hh = S.hourHeight;
+  ghost.style.top = (drag.start - V.a) / 60 * hh + 'px';
+  ghost.style.height = Math.max(16, (drag.end - drag.start) / 60 * hh) + 'px';
+  ghost.textContent = `${fmt(drag.start)} – ${fmt(drag.end)}`;
+}
+function autoTick() {
+  if (!drag) return;
+  if (drag.moved) {
+    const r = scroller.getBoundingClientRect(); let dy = 0;
+    if (drag.y < r.top + 80) dy = -9; else if (drag.y > r.bottom - 48) dy = 9;
+    if (dy) { const t = scroller.scrollTop; scroller.scrollTop += dy; if (scroller.scrollTop !== t) updateDrag(); }
+  }
+  raf = requestAnimationFrame(autoTick);
+}
+function endDrag(cancel) {
+  const d = drag; if (!d) return;
+  drag = null; cancelAnimationFrame(raf);
+  if (ghost) { ghost.remove(); ghost = null; }
+  document.body.classList.remove('dragging');
+  if (d.el) d.el.classList.remove('lifting');
+  if (cancel) return render();
+  if (!d.moved) {
+    if (d.touch) { // long-press without moving behaves like a tap
+      suppressUntil = Date.now() + 450;
+      if (d.mode === 'create') newBlock(d.date, d.anchor, d.anchor + S.defDur); else openEditor(d.b, d.occ, false);
+    }
+    return;
+  }
+  suppressUntil = Date.now() + 450;
+  if (d.mode === 'create') { render(); return newBlock(d.date, d.start, d.end); }
+  const b = d.b;
+  if (isRep(b)) { // detach just this occurrence
+    (b.exDates = b.exDates || []).push(d.occ);
+    B.push({ ...b, id: uid(), date: d.date, start: d.start, end: d.end, repeat: 'none', exDates: [],
+      done: b.done && b.done[d.occ] ? { [d.date]: true } : {} });
+    if (b.done) delete b.done[d.occ];
+  } else {
+    if (b.done && b.done[b.date] && d.date !== b.date) { delete b.done[b.date]; b.done[d.date] = true; }
+    b.date = d.date; b.start = d.start; b.end = d.end;
+  }
+  save(); render();
+}
+
+// mouse / pen
+scroller.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch' || e.button !== 0) return;
+  if (!startDrag(e.target, e.clientX, e.clientY, false)) return;
+  const mv = ev => moveDrag(ev.clientX, ev.clientY);
+  const up = ev => { removeEventListener('pointermove', mv); removeEventListener('pointerup', up); removeEventListener('pointercancel', up); endDrag(ev.type === 'pointercancel'); };
+  addEventListener('pointermove', mv); addEventListener('pointerup', up); addEventListener('pointercancel', up);
+});
+// touch: long-press to drag so normal scrolling keeps working
+let tt = null;
+scroller.addEventListener('touchstart', e => {
+  if (e.touches.length > 1) { if (tt) clearTimeout(tt.timer); tt = null; if (drag) endDrag(true); return; }
+  const t = e.touches[0];
+  tt = { x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, target: e.target };
+  tt.timer = setTimeout(() => {
+    if (!tt) return; tt.timer = null;
+    if (startDrag(tt.target, tt.x, tt.y, true) && navigator.vibrate) navigator.vibrate(10);
+  }, 330);
+}, { passive: true });
+scroller.addEventListener('touchmove', e => {
+  if (!tt) return;
+  const t = e.touches[0]; tt.x = t.clientX; tt.y = t.clientY;
+  if (drag && drag.touch) { e.preventDefault(); moveDrag(tt.x, tt.y); return; }
+  if (tt.timer && Math.hypot(tt.x - tt.x0, tt.y - tt.y0) > 8) { clearTimeout(tt.timer); tt.timer = null; }
+}, { passive: false });
+const touchEnd = e => {
+  if (!tt) return;
+  clearTimeout(tt.timer); const s = tt; tt = null;
+  if (drag && drag.touch) return endDrag(e.type === 'touchcancel');
+  const dx = s.x - s.x0, dy = s.y - s.y0;
+  if (e.type === 'touchend' && Math.abs(dx) > 70 && Math.abs(dx) > 2.5 * Math.abs(dy)) { suppressUntil = Date.now() + 450; nav(dx < 0 ? 1 : -1); }
+};
+scroller.addEventListener('touchend', touchEnd);
+scroller.addEventListener('touchcancel', touchEnd);
+scroller.addEventListener('contextmenu', e => e.preventDefault());
+
+scroller.addEventListener('click', e => {
+  if (Date.now() < suppressUntil) return;
+  const blk = e.target.closest('.blk');
+  if (e.target.closest('.blk-check') && blk) {
+    const b = byId(blk.dataset.id), d = blk.dataset.date; if (!b) return;
+    b.done = b.done || {}; if (b.done[d]) delete b.done[d]; else b.done[d] = true;
+    save(); return render();
+  }
+  if (blk) { const b = byId(blk.dataset.id); return b && openEditor(b, blk.dataset.date, false); }
+  const head = e.target.closest('.dayhead');
+  if (head) { cursor = head.dataset.date; if (view !== 'day') view = 'day'; return render(); }
+  const col = e.target.closest('.col');
+  if (col) {
+    const p = pointAt(e.clientX, e.clientY), g = Math.max(S.slot, 30), s = Math.floor(p.min / g) * g;
+    newBlock(col.dataset.date, s, s + S.defDur);
+  }
+});
+
+/* ---------- sheets ---------- */
+function openSheet(html) { sheet.innerHTML = html; sheet.onclick = sheet.oninput = sheet.onchange = sheet.onsubmit = null; overlay.classList.add('open'); sheet.scrollTop = 0; }
+function closeSheet() { overlay.classList.remove('open'); sheet.innerHTML = ''; }
+overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeSheet(); });
+const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}"${String(v) === String(cur) ? ' selected' : ''}>${l}</option>`).join('');
+
+function newBlock(date, start, end) {
+  start = clamp(start, 0, 1440 - S.slot); end = clamp(end, start + S.slot, 1440);
+  openEditor({ id: uid(), title: '', date, start, end, cat: C[0].id, notes: '', repeat: 'none', done: {}, exDates: [] }, date, true);
+}
+function openEditor(b, date, isNew) {
+  const rep = isRep(b), nice = parse(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  openSheet(`<form id="edf" novalidate>
+    <div class="sheet-head"><h2>${isNew ? 'New block' : 'Edit block'}</h2><button type="button" class="btn icon ghost" data-close aria-label="Close">✕</button></div>
+    <input class="title-in" id="e-title" placeholder="What's this block for?" value="${esc(b.title)}" autocomplete="off" enterkeyhint="done">
+    <div class="rows">
+      <label class="field m-wide wide">${rep ? 'Repeats from' : 'Date'}<input type="date" id="e-date" value="${b.date}"></label>
+      <label class="field">Start<input type="time" id="e-start" value="${toHHMM(b.start)}" step="${S.slot * 60}"></label>
+      <label class="field">End<input type="time" id="e-end" value="${toHHMM(b.end)}" step="${S.slot * 60}"></label>
+    </div>
+    <p class="err" id="e-err"></p>
+    <div class="field">Category</div>
+    <div class="chips">${C.map(c => `<label class="chip"><input type="radio" name="cat" value="${esc(c.id)}"${cat(b.cat).id === c.id ? ' checked' : ''}><span style="--c:${esc(c.color)}"><i></i>${esc(c.name)}</span></label>`).join('')}</div>
+    <div class="rows">
+      <label class="field wide">Repeat<select id="e-rep">${opts([['none', 'Does not repeat'], ['daily', 'Every day'], ['weekdays', 'Weekdays (Mon–Fri)'], ['weekly', 'Every week']], b.repeat || 'none')}</select></label>
+      <label class="field wide">Notes<textarea id="e-notes" placeholder="Optional">${esc(b.notes)}</textarea></label>
+    </div>
+    ${isNew ? '' : `<label class="check"><input type="checkbox" id="e-done"${b.done && b.done[date] ? ' checked' : ''}> Done${rep ? ` on ${nice}` : ''}</label>`}
+    ${rep && !isNew ? '<p class="hint">Edits here apply to every repeat. Dragging a block on the calendar moves only that day.</p>' : ''}
+    <div class="actions">
+      ${isNew ? '' : rep ? '<button type="button" class="btn danger" data-del="one">Delete this day</button><button type="button" class="btn danger" data-del="all">Delete all</button>' : '<button type="button" class="btn danger" data-del="all">Delete</button>'}
+      <span class="sp"></span>
+      <button type="submit" class="btn primary">${isNew ? 'Add block' : 'Save'}</button>
+    </div></form>`);
+  if (isNew) setTimeout(() => { const t = $('#e-title'); t && t.focus(); }, 60);
+  sheet.onclick = e => {
+    if (e.target.closest('[data-close]')) return closeSheet();
+    const del = e.target.closest('[data-del]'); if (!del) return;
+    if (del.dataset.del === 'one') (b.exDates = b.exDates || []).push(date);
+    else { const i = B.indexOf(b); if (i >= 0) B.splice(i, 1); }
+    save(); closeSheet(); render();
+  };
+  sheet.onsubmit = e => {
+    e.preventDefault();
+    const start = toMin($('#e-start').value), end = toMin($('#e-end').value), nd = $('#e-date').value;
+    if (!nd || isNaN(start) || isNaN(end)) return $('#e-err').textContent = 'Pick a date, start and end time.';
+    if (end <= start) return $('#e-err').textContent = 'End time has to be after the start time.';
+    const wasDone = isNew ? false : $('#e-done').checked;
+    b.title = $('#e-title').value.trim(); b.start = start; b.end = end; b.date = nd;
+    b.cat = (sheet.querySelector('input[name=cat]:checked') || {}).value || C[0].id;
+    b.repeat = $('#e-rep').value; b.notes = $('#e-notes').value.trim(); b.done = b.done || {};
+    if (isRep(b)) { if (wasDone) b.done[date] = true; else delete b.done[date]; }
+    else { b.done = wasDone ? { [nd]: true } : {}; b.exDates = []; }
+    if (isNew) B.push(b);
+    save(); closeSheet(); render();
+  };
+}
+
+const ACCENTS = ['#e2562b', '#2f6fed', '#1f9d6b', '#8b5cf6', '#d6336c', '#c98a00'];
+function openSettings() {
+  const hrs = (from, to) => { const o = []; for (let h = from; h <= to; h++) o.push([h, h === 24 ? (S.hour12 ? '12 AM (midnight)' : '24:00') : fmt(h * 60)]); return o; };
+  openSheet(`<div class="sheet-head"><h2>Customize</h2><button class="btn icon ghost" data-close aria-label="Close">✕</button></div>
+    <h3 style="margin-top:4px">Appearance</h3>
+    <div class="rows">
+      <label class="field wide">Theme<select data-set="theme">${opts([['auto', 'Match device'], ['light', 'Light'], ['dark', 'Dark']], S.theme)}</select></label>
+    </div>
+    <div class="field">Accent colour</div>
+    <div class="swatches" style="margin:6px 0 12px">
+      ${ACCENTS.map(c => `<button class="sw${c === S.accent ? ' on' : ''}" style="--c:${c}" data-accent="${c}" aria-label="Accent ${c}"></button>`).join('')}
+      <input type="color" data-set="accent" value="${esc(S.accent)}" aria-label="Custom accent colour">
+    </div>
+    <label class="field">Row height (zoom)<input type="range" min="36" max="110" step="2" data-set="hourHeight" data-t="n" value="${S.hourHeight}"></label>
+
+    <h3>Calendar</h3>
+    <div class="rows">
+      <label class="field">Opens in<select data-set="view">${opts([['auto', 'Auto (day on phone)'], ['day', 'Day'], ['3day', '3 days'], ['week', 'Week']], S.view)}</select></label>
+      <label class="field">Week starts<select data-set="weekStart" data-t="n">${opts([[1, 'Monday'], [0, 'Sunday'], [6, 'Saturday']], S.weekStart)}</select></label>
+      <label class="field">Day starts<select data-set="dayStart" data-t="n">${opts(hrs(0, 23), S.dayStart)}</select></label>
+      <label class="field">Day ends<select data-set="dayEnd" data-t="n">${opts(hrs(1, 24), S.dayEnd)}</select></label>
+      <label class="field">Snap to<select data-set="slot" data-t="n">${opts([[5, '5 min'], [10, '10 min'], [15, '15 min'], [30, '30 min'], [60, '1 hour']], S.slot)}</select></label>
+      <label class="field">New block length<select data-set="defDur" data-t="n">${opts([[15, '15 min'], [25, '25 min'], [30, '30 min'], [45, '45 min'], [60, '1 hour'], [90, '1.5 hours'], [120, '2 hours']], S.defDur)}</select></label>
+      <label class="field">Time format<select data-set="hour12" data-t="b">${opts([['true', '12-hour'], ['false', '24-hour']], S.hour12)}</select></label>
+      <label class="field">Weekends<select data-set="weekends" data-t="b">${opts([['true', 'Show'], ['false', 'Hide in week view']], S.weekends)}</select></label>
+    </div>
+
+    <h3>Categories</h3>
+    ${C.map(c => `<div class="catrow" data-id="${esc(c.id)}"><input type="color" data-cat="color" value="${esc(c.color)}" aria-label="Colour"><input type="text" data-cat="name" value="${esc(c.name)}" aria-label="Name"><button class="btn icon ghost" data-delcat aria-label="Delete category"${C.length < 2 ? ' disabled' : ''}>✕</button></div>`).join('')}
+    <button class="btn" data-addcat>+ Add category</button>
+
+    <h3>Your data</h3>
+    <p class="hint" style="margin:0 0 10px">Everything is saved in this browser only. Export a backup to move it to another device.</p>
+    <div class="actions" style="margin-top:0">
+      <button class="btn" data-export>Export backup</button>
+      <label class="btn" style="cursor:pointer">Import<input type="file" accept="application/json,.json" data-import hidden></label>
+      <span class="sp"></span>
+      <button class="btn danger" data-clear>Clear all blocks</button>
+    </div>`);
+  const apply = () => { if (S.dayEnd <= S.dayStart) S.dayEnd = Math.min(24, S.dayStart + 1); save(); applyTheme(); render(); };
+  sheet.oninput = e => {
+    const t = e.target, k = t.dataset.set;
+    if (k) {
+      S[k] = t.dataset.t === 'n' ? Number(t.value) : t.dataset.t === 'b' ? t.value === 'true' : t.value;
+      if (k === 'view' && S.view !== 'auto') view = S.view;
+      apply();
+      if (k === 'hour12' || k === 'dayStart' || k === 'dayEnd') { const st = sheet.scrollTop; openSettings(); sheet.scrollTop = st; }
+      return;
+    }
+    if (t.dataset.cat) { const c = C.find(x => x.id === t.closest('.catrow').dataset.id); if (c) { c[t.dataset.cat] = t.value; save(); render(); } }
+  };
+  sheet.onchange = e => {
+    if (!e.target.matches('[data-import]')) return;
+    const f = e.target.files[0]; if (!f) return;
+    f.text().then(txt => {
+      const raw = JSON.parse(txt);
+      if (!raw || !Array.isArray(raw.blocks)) throw 0;
+      adopt(raw); save(); applyTheme(); closeSheet(); render(); toast('Backup imported');
+    }).catch(() => toast("That file isn't a Blocks backup"));
+  };
+  sheet.onclick = e => {
+    const t = e.target, re = () => { const st = sheet.scrollTop; openSettings(); sheet.scrollTop = st; };
+    if (t.closest('[data-close]')) return closeSheet();
+    const ac = t.closest('[data-accent]'); if (ac) { S.accent = ac.dataset.accent; apply(); return re(); }
+    if (t.closest('[data-addcat]')) { C.push({ id: uid(), name: 'New category', color: ACCENTS[C.length % ACCENTS.length] }); save(); return re(); }
+    const dc = t.closest('[data-delcat]');
+    if (dc && C.length > 1) {
+      const id = dc.closest('.catrow').dataset.id, i = C.findIndex(c => c.id === id);
+      C.splice(i, 1); B.forEach(b => { if (b.cat === id) b.cat = C[0].id; }); save(); render(); return re();
+    }
+    if (t.closest('[data-export]')) {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }));
+      a.download = `blocks-backup-${todayStr()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000); return;
+    }
+    const cl = t.closest('[data-clear]');
+    if (cl) {
+      if (cl.dataset.armed) { B.length = 0; save(); render(); closeSheet(); toast('All blocks cleared'); }
+      else { cl.dataset.armed = '1'; cl.textContent = 'Tap again to confirm'; }
+    }
+  };
+}
+
+function toast(msg) {
+  document.querySelectorAll('.toast').forEach(t => t.remove());
+  const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t); setTimeout(() => t.remove(), 3800);
+}
+
+/* ---------- chrome ---------- */
+$('#prev').onclick = () => nav(-1);
+$('#next').onclick = () => nav(1);
+$('#today').onclick = () => { cursor = todayStr(); firstScroll = true; render(); };
+$('#gear').onclick = openSettings;
+$('#views').onclick = e => { const b = e.target.closest('button'); if (b) { view = b.dataset.v; render(); } };
+const jump = $('#jump');
+$('#title').onclick = e => {
+  if (e.target === jump) return;
+  jump.value = cursor;
+  try { jump.showPicker(); } catch (err) { jump.style.pointerEvents = 'auto'; jump.focus(); jump.click(); }
+};
+jump.onchange = () => { if (jump.value) { cursor = jump.value; render(); } };
+$('#fab').onclick = () => {
+  const t = todayStr();
+  if (V.days.includes(t)) {
+    const n = new Date(), s = Math.min(1440 - S.defDur, Math.ceil((n.getHours() * 60 + n.getMinutes() + 1) / 30) * 30);
+    newBlock(t, s, s + S.defDur);
+  } else newBlock(V.days[0], 9 * 60, 9 * 60 + S.defDur);
+};
+addEventListener('keydown', e => {
+  if (e.key === 'Escape') { if (overlay.classList.contains('open')) closeSheet(); return; }
+  if (overlay.classList.contains('open') || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  const k = e.key.toLowerCase();
+  if (k === 'arrowleft') nav(-1); else if (k === 'arrowright') nav(1);
+  else if (k === 't') $('#today').click(); else if (k === 'n') $('#fab').click();
+  else if (k === 'd') { view = 'day'; render(); } else if (k === '3') { view = '3day'; render(); } else if (k === 'w') { view = 'week'; render(); }
+});
+setInterval(() => { if (!overlay.classList.contains('open')) render(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !overlay.classList.contains('open')) render(); });
+
+applyTheme(); render();
+if (!state.seenHint) { state.seenHint = true; save(); setTimeout(() => toast(matchMedia('(pointer:coarse)').matches ? 'Tap a slot to add a block · press and hold to drag' : 'Click or drag on the grid to add a block'), 500); }
+window.__blocks = { get state() { return state; } };
+})();
+</script>
+</body>
+</html>

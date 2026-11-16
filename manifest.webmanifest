@@ -1,0 +1,12 @@
+{
+  "name": "Blocks",
+  "short_name": "Blocks",
+  "description": "A fast, customizable time blocking calendar.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f3ee",
+  "theme_color": "#f5f3ee",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
