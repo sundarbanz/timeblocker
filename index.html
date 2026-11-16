@@ -213,7 +213,7 @@ function defaults() {
   let h12 = true;
   try { h12 = !!new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12; } catch (e) {}
   return {
-    settings: { theme: 'auto', accent: '#e2562b', weekStart: 1, hour12: h12, dayStart: 6, dayEnd: 22,
+    settings: { theme: 'auto', accent: '#e2562b', weekStart: 1, hour12: h12, dayStart: 0, dayEnd: 24,
       slot: 15, defDur: 60, hourHeight: 56, view: 'auto', weekends: true },
     categories: [
       { id: 'deep', name: 'Deep work', color: '#3f66e0' },
@@ -233,13 +233,16 @@ function adopt(raw) {
     settings: { ...d.settings, ...(raw && raw.settings) },
     categories: raw && Array.isArray(raw.categories) && raw.categories.length ? raw.categories : d.categories,
     blocks: raw && Array.isArray(raw.blocks) ? raw.blocks : [],
-    seenHint: !!(raw && raw.seenHint)
+    seenHint: !!(raw && raw.seenHint),
+    fullDay: !!(raw && raw.fullDay)
   };
   S = state.settings; C = state.categories; B = state.blocks;
 }
 function load() { let raw = null; try { raw = JSON.parse(localStorage.getItem(KEY)); } catch (e) {} adopt(raw); }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
 load();
+/* One-shot: expand truncated day window to continuous 12am → 12am. */
+if (!state.fullDay) { S.dayStart = 0; S.dayEnd = 24; state.fullDay = true; save(); }
 
 let view = S.view === 'auto' ? (innerWidth < 720 ? 'day' : 'week') : S.view;
 let cursor = todayStr();
