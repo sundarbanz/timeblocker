@@ -88,6 +88,7 @@ button{cursor:pointer;border:0;background:none;padding:0}
   background-size:100% var(--hh),100% var(--hh);background-position:0 0,0 calc(var(--hh)/2);
   border-bottom:1px solid var(--line)}
 .col.today{background-color:color-mix(in srgb,var(--accent) 4%,transparent)}
+body.paste-mode .col{cursor:copy}
 
 .blk{position:absolute;border-radius:7px;padding:4px 22px 4px 8px;overflow:hidden;cursor:grab;
   background:color-mix(in srgb,var(--c) var(--mix),var(--surface));border-left:3px solid var(--c);
@@ -703,6 +704,7 @@ scroller.addEventListener('click', e => {
   const col = e.target.closest('.col');
   if (col) {
     const p = pointAt(e.clientX, e.clientY), g = Math.max(S.slot, 30), s = Math.floor(p.min / g) * g;
+    if (!e.shiftKey && clip && pasteBlock(col.dataset.date, s)) return;
     newBlock(col.dataset.date, s, s + S.defDur);
   }
 });
@@ -713,11 +715,54 @@ function closeSheet() { overlay.classList.remove('open'); sheet.innerHTML = ''; 
 overlay.addEventListener('pointerdown', e => { if (e.target === overlay) closeSheet(); });
 const opts = (list, cur) => list.map(([v, l]) => `<option value="${v}"${String(v) === String(cur) ? ' selected' : ''}>${l}</option>`).join('');
 
+let clip = null, lastBlock = null;
+function setClip(next) {
+  clip = next;
+  document.body.classList.toggle('paste-mode', !!clip);
+}
+function copyBlock(b) {
+  if (!b) return;
+  const dur = Math.max(S.slot, (Number(b.end) || 0) - (Number(b.start) || 0));
+  setClip({
+    title: b.title || '',
+    cat: b.cat || C[0].id,
+    notes: b.notes || '',
+    repeat: b.repeat || 'weekly',
+    dur
+  });
+  lastBlock = b;
+  toast('Copied — tap an empty slot to paste');
+}
+function pasteBlock(date, start) {
+  if (!clip) return false;
+  start = clamp(start, 0, 1440 - S.slot);
+  const end = clamp(start + clip.dur, start + S.slot, 1440);
+  const b = {
+    id: uid(),
+    title: clip.title,
+    date,
+    start,
+    end,
+    cat: C.some(c => c.id === clip.cat) ? clip.cat : C[0].id,
+    notes: clip.notes || '',
+    repeat: clip.repeat || 'weekly',
+    done: {},
+    exDates: []
+  };
+  B.push(b);
+  lastBlock = b;
+  save();
+  render();
+  toast('Pasted · Esc clears clipboard');
+  return true;
+}
+
 function newBlock(date, start, end) {
   start = clamp(start, 0, 1440 - S.slot); end = clamp(end, start + S.slot, 1440);
   openEditor({ id: uid(), title: '', date, start, end, cat: C[0].id, notes: '', repeat: 'weekly', done: {}, exDates: [] }, date, true);
 }
 function openEditor(b, date, isNew) {
+  lastBlock = b;
   const rep = isRep(b), nice = parse(date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
   const dowLong = parse(b.date || date).toLocaleDateString(undefined, { weekday: 'long' });
   openSheet(`<form id="edf" novalidate>
@@ -744,6 +789,7 @@ function openEditor(b, date, isNew) {
     ${isNew ? '' : `<label class="check"><input type="checkbox" id="e-done"${b.done && b.done[date] ? ' checked' : ''}> Done${rep ? ` on ${nice}` : ''}</label>`}
     ${rep && !isNew ? '<p class="hint">Edits here change every ' + dowLong + '. Dragging or “Delete this day” only affects that date.</p>' : ''}
     <div class="actions">
+      ${isNew ? '' : '<button type="button" class="btn" data-copy>Copy</button>'}
       ${isNew ? '' : rep ? '<button type="button" class="btn danger" data-del="one">Delete this day</button><button type="button" class="btn danger" data-del="all">Delete all</button>' : '<button type="button" class="btn danger" data-del="all">Delete</button>'}
       <span class="sp"></span>
       <button type="submit" class="btn primary">${isNew ? 'Add block' : 'Save'}</button>
@@ -751,6 +797,18 @@ function openEditor(b, date, isNew) {
   if (isNew) setTimeout(() => { const t = $('#e-title'); t && t.focus(); }, 60);
   sheet.onclick = e => {
     if (e.target.closest('[data-close]')) return closeSheet();
+    if (e.target.closest('[data-copy]')) {
+      copyBlock({
+        title: $('#e-title').value.trim(),
+        start: toMin($('#e-start').value),
+        end: toMin($('#e-end').value),
+        cat: (sheet.querySelector('input[name=cat]:checked') || {}).value || b.cat,
+        notes: $('#e-notes').value.trim(),
+        repeat: $('#e-rep').value
+      });
+      closeSheet();
+      return;
+    }
     const del = e.target.closest('[data-del]'); if (!del) return;
     if (del.dataset.del === 'one') (b.exDates = b.exDates || []).push(date);
     else { const i = B.indexOf(b); if (i >= 0) B.splice(i, 1); }
@@ -899,18 +957,40 @@ $('#syncChip').onclick = () => {
   syncPull().then(() => syncPush()).then(() => toast(syncStatus === 'on' ? 'Synced' : 'Sync failed — try again'));
 };
 addEventListener('keydown', e => {
-  if (e.key === 'Escape') { if (overlay.classList.contains('open')) closeSheet(); return; }
-  if (overlay.classList.contains('open') || e.metaKey || e.ctrlKey || e.altKey || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+  if (e.key === 'Escape') {
+    if (overlay.classList.contains('open')) closeSheet();
+    else if (clip) { setClip(null); toast('Clipboard cleared'); }
+    return;
+  }
+  const typing = /INPUT|TEXTAREA|SELECT/.test(e.target.tagName);
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && !typing) {
+    const k = e.key.toLowerCase();
+    if (k === 'c' && lastBlock && !overlay.classList.contains('open')) { e.preventDefault(); copyBlock(lastBlock); return; }
+    if (k === 'v' && clip && !overlay.classList.contains('open')) {
+      e.preventDefault();
+      const day = V.days.includes(todayStr()) ? todayStr() : V.days[0];
+      const n = new Date(), s = Math.min(1440 - clip.dur, Math.floor((n.getHours() * 60 + n.getMinutes()) / S.slot) * S.slot);
+      pasteBlock(day, s);
+      return;
+    }
+  }
+  if (overlay.classList.contains('open') || e.metaKey || e.ctrlKey || e.altKey || typing) return;
   const k = e.key.toLowerCase();
   if (k === 'arrowleft') nav(-1); else if (k === 'arrowright') nav(1);
   else if (k === 't') $('#today').click(); else if (k === 'n') $('#fab').click();
   else if (k === 'd') { view = 'day'; render(); } else if (k === '3') { view = '3day'; render(); } else if (k === 'w') { view = 'week'; render(); }
+  else if (k === 'c' && lastBlock) copyBlock(lastBlock);
+  else if (k === 'v' && clip) {
+    const day = V.days.includes(todayStr()) ? todayStr() : V.days[0];
+    const n = new Date(), s = Math.min(1440 - clip.dur, Math.floor((n.getHours() * 60 + n.getMinutes()) / S.slot) * S.slot);
+    pasteBlock(day, s);
+  }
 });
 setInterval(() => { if (!overlay.classList.contains('open')) render(); }, 60000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden || overlay.classList.contains('open')) return;
   render();
-  syncPull({ seed: false });
+  syncPull();
 });
 
 applyTheme(); render();
