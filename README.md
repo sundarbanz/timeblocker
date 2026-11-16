@@ -1,6 +1,6 @@
 # Blocks
 
-A time blocking calendar. Static site: no build step, no dependencies.
+A time blocking calendar. Static site: no build step, no frontend dependencies.
 
 ## Deploy to Vercel
 
@@ -12,11 +12,15 @@ Option A, CLI:
 Option B, GitHub: push this folder to a repo, then import it at vercel.com/new.
 Framework preset "Other", no build command, output directory left blank.
 
+After deploy, open the **Vercel URL** on phone and desktop — they sync automatically via the `?s=` link.
+
 ## Run locally
 
-Open `index.html`, or `npx serve .`
+`npx vercel dev` (needed for `/api/sync`), or open `index.html` for UI-only (no cross-device sync).
 
 ## Notes
 
-- Data lives in the browser's localStorage (per device). Use Customize > Export backup to move it.
-- Everything is in `index.html`: styles at the top, app code at the bottom.
+- Calendar data syncs across devices when you use the same sync link (Customize → Copy sync link).
+- Also saved in the browser; Customize → Export backup for a file copy.
+- Installable as a PWA (Add to Home Screen) over HTTPS.
+- Everything UI-related is in `index.html`; sync API is `api/sync.js`.

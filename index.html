@@ -7,9 +7,12 @@
 <meta name="description" content="A fast, customizable time blocking calendar.">
 <meta name="theme-color" content="#f5f3ee">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Blocks">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
 :root{
   --bg:#f5f3ee; --surface:#fffdf8; --ink:#1c1a16; --muted:#7b766b;
@@ -234,15 +237,121 @@ function adopt(raw) {
     categories: raw && Array.isArray(raw.categories) && raw.categories.length ? raw.categories : d.categories,
     blocks: raw && Array.isArray(raw.blocks) ? raw.blocks : [],
     seenHint: !!(raw && raw.seenHint),
-    fullDay: !!(raw && raw.fullDay)
+    fullDay: !!(raw && raw.fullDay),
+    syncId: raw && typeof raw.syncId === 'string' ? raw.syncId : null,
+    updatedAt: raw && Number(raw.updatedAt) || 0
   };
   S = state.settings; C = state.categories; B = state.blocks;
 }
 function load() { let raw = null; try { raw = JSON.parse(localStorage.getItem(KEY)); } catch (e) {} adopt(raw); }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+let syncTimer = null, syncPushTimer = null, syncBusy = false, syncStatus = 'off';
+function save(opts) {
+  state.updatedAt = Date.now();
+  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  if (!opts || opts.sync !== false) scheduleSyncPush();
+}
 load();
 /* One-shot: expand truncated day window to continuous 12am → 12am. */
-if (!state.fullDay) { S.dayStart = 0; S.dayEnd = 24; state.fullDay = true; save(); }
+if (!state.fullDay) { S.dayStart = 0; S.dayEnd = 24; state.fullDay = true; save({ sync: false }); }
+
+/* ---------- cross-device sync ---------- */
+function newSyncId() {
+  const a = new Uint8Array(16);
+  crypto.getRandomValues(a);
+  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+}
+function syncUrlFor(id) {
+  const u = new URL(location.href);
+  u.searchParams.set('s', id);
+  return u.toString();
+}
+function writeSyncParam(id) {
+  try {
+    const u = new URL(location.href);
+    if (u.searchParams.get('s') === id) return;
+    u.searchParams.set('s', id);
+    history.replaceState(null, '', u.pathname + u.search + u.hash);
+  } catch (e) {}
+}
+function syncApi(id) {
+  if (location.protocol === 'file:') return null;
+  return `/api/sync?id=${encodeURIComponent(id)}`;
+}
+function scheduleSyncPush() {
+  if (!state.syncId || !syncApi(state.syncId)) return;
+  clearTimeout(syncPushTimer);
+  syncPushTimer = setTimeout(() => { syncPush(); }, 350);
+}
+async function syncPush() {
+  const id = state.syncId, url = syncApi(id);
+  if (!id || !url || syncBusy) return;
+  syncBusy = true; syncStatus = 'saving';
+  try {
+    const r = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state)
+    });
+    syncStatus = r.ok ? 'on' : 'err';
+  } catch (e) { syncStatus = 'err'; }
+  finally { syncBusy = false; }
+}
+async function syncPull(opts) {
+  const id = state.syncId, url = syncApi(id);
+  if (!id || !url || syncBusy) return false;
+  syncBusy = true;
+  try {
+    const r = await fetch(url, { cache: 'no-store' });
+    if (r.status === 404) {
+      syncStatus = 'on';
+      if (!opts || opts.seed !== false) await syncPush();
+      return false;
+    }
+    if (!r.ok) { syncStatus = 'err'; return false; }
+    const remote = await r.json();
+    if (!remote || typeof remote !== 'object') { syncStatus = 'err'; return false; }
+    const remoteAt = Number(remote.updatedAt) || 0;
+    if (remoteAt > (state.updatedAt || 0)) {
+      const keepView = view, keepCursor = cursor;
+      adopt({ ...remote, syncId: id });
+      try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+      view = keepView; cursor = keepCursor;
+      applyTheme();
+      if (!drag && !overlay.classList.contains('open')) render();
+      syncStatus = 'on';
+      return true;
+    }
+    syncStatus = 'on';
+    return false;
+  } catch (e) { syncStatus = 'err'; return false; }
+  finally { syncBusy = false; }
+}
+function startSyncLoop() {
+  clearInterval(syncTimer);
+  if (!state.syncId || !syncApi(state.syncId)) return;
+  syncTimer = setInterval(() => {
+    if (document.hidden || drag || overlay.classList.contains('open')) return;
+    syncPull({ seed: false });
+  }, 4000);
+}
+async function ensureSync() {
+  const fromUrl = (() => { try { return new URL(location.href).searchParams.get('s'); } catch (e) { return null; } })();
+  if (fromUrl && /^[a-f0-9]{32}$/.test(fromUrl)) {
+    if (state.syncId && state.syncId !== fromUrl && (state.blocks || []).length) {
+      /* Opening someone else's sync link replaces this device's cloud pointer. */
+    }
+    state.syncId = fromUrl;
+    save({ sync: false });
+  }
+  if (!state.syncId) {
+    state.syncId = newSyncId();
+    save({ sync: false });
+  }
+  writeSyncParam(state.syncId);
+  if (!syncApi(state.syncId)) { syncStatus = 'local'; return; }
+  await syncPull({ seed: true });
+  startSyncLoop();
+}
 
 let view = S.view === 'auto' ? (innerWidth < 720 ? 'day' : 'week') : S.view;
 let cursor = todayStr();
@@ -632,8 +741,19 @@ function openSettings() {
     ${C.map(c => `<div class="catrow" data-id="${esc(c.id)}"><input type="color" data-cat="color" value="${esc(c.color)}" aria-label="Colour"><input type="text" data-cat="name" value="${esc(c.name)}" aria-label="Name"><button class="btn icon ghost" data-delcat aria-label="Delete category"${C.length < 2 ? ' disabled' : ''}>✕</button></div>`).join('')}
     <button class="btn" data-addcat>+ Add category</button>
 
+    <h3>Sync across devices</h3>
+    <p class="hint" style="margin:0 0 10px">${syncStatus === 'local'
+      ? 'Open this app from your Vercel URL (not a local file) so phone and desktop can sync.'
+      : syncStatus === 'err'
+        ? 'Sync hiccup — edits still save on this device and will retry.'
+        : 'Edits sync automatically. Open this same link on your phone and computer.'}</p>
+    <div class="actions" style="margin-top:0;margin-bottom:12px">
+      <button class="btn primary" data-copysync>Copy sync link</button>
+      <button class="btn" data-newsync>New sync link</button>
+    </div>
+
     <h3>Your data</h3>
-    <p class="hint" style="margin:0 0 10px">Everything is saved in this browser only. Export a backup to move it to another device.</p>
+    <p class="hint" style="margin:0 0 10px">Also saved in this browser. Export a backup anytime.</p>
     <div class="actions" style="margin-top:0">
       <button class="btn" data-export>Export backup</button>
       <label class="btn" style="cursor:pointer">Import<input type="file" accept="application/json,.json" data-import hidden></label>
@@ -670,6 +790,22 @@ function openSettings() {
     if (dc && C.length > 1) {
       const id = dc.closest('.catrow').dataset.id, i = C.findIndex(c => c.id === id);
       C.splice(i, 1); B.forEach(b => { if (b.cat === id) b.cat = C[0].id; }); save(); render(); return re();
+    }
+    if (t.closest('[data-copysync]')) {
+      const link = syncUrlFor(state.syncId);
+      const done = () => toast('Sync link copied — open it on your other device');
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(done).catch(() => prompt('Copy this sync link', link));
+      else prompt('Copy this sync link', link);
+      return;
+    }
+    if (t.closest('[data-newsync]')) {
+      if (!confirm('Create a new sync link? This device keeps its blocks, but old links stop updating here.')) return;
+      state.syncId = newSyncId();
+      writeSyncParam(state.syncId);
+      save();
+      startSyncLoop();
+      syncPush().then(() => { openSettings(); toast('New sync link ready — copy it to your other devices'); });
+      return;
     }
     if (t.closest('[data-export]')) {
       const a = document.createElement('a');
@@ -719,10 +855,24 @@ addEventListener('keydown', e => {
   else if (k === 'd') { view = 'day'; render(); } else if (k === '3') { view = '3day'; render(); } else if (k === 'w') { view = 'week'; render(); }
 });
 setInterval(() => { if (!overlay.classList.contains('open')) render(); }, 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !overlay.classList.contains('open')) render(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || overlay.classList.contains('open')) return;
+  render();
+  syncPull({ seed: false });
+});
 
 applyTheme(); render();
-if (!state.seenHint) { state.seenHint = true; save(); setTimeout(() => toast(matchMedia('(pointer:coarse)').matches ? 'Tap a slot to add a block · press and hold to drag' : 'Click or drag on the grid to add a block'), 500); }
+ensureSync().then(() => {
+  if (!state.seenHint) {
+    state.seenHint = true; save();
+    setTimeout(() => toast(matchMedia('(pointer:coarse)').matches
+      ? 'Tap a slot to add a block · press and hold to drag'
+      : 'Click or drag on the grid to add a block'), 500);
+  }
+});
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('./sw.js').catch(() => {});
+}
 window.__blocks = { get state() { return state; } };
 })();
 </script>
